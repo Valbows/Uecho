@@ -72,8 +72,18 @@ app.post('/prompt', authMiddleware, (req, res) => {
   });
 });
 
-// ─── Start ──────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`[MCP Bridge] Listening on http://localhost:${PORT}`);
-  console.log(`[MCP Bridge] Auth: ${TOKEN ? 'enabled' : 'disabled'}`);
-});
+// ─── Export for testing ──────────────────────────────────────────
+export { app, PORT, TOKEN };
+
+// ─── Start (only when run directly) ─────────────────────────────
+const isMainModule =
+  typeof process !== 'undefined' &&
+  process.argv[1] &&
+  (process.argv[1].endsWith('server.ts') || process.argv[1].endsWith('server.js'));
+
+if (isMainModule) {
+  app.listen(PORT, () => {
+    console.log(`[MCP Bridge] Listening on http://localhost:${PORT}`);
+    console.log(`[MCP Bridge] Auth: ${TOKEN ? 'enabled' : 'disabled'}`);
+  });
+}
