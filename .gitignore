@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Build outputs
+extension/dist/
+extension/build/
+backend/dist/
+mcp-bridge/dist/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Chrome extension
+*.crx
+*.pem
+
+# Firebase
+.firebase/
+firebase-debug.log
+
+# Docker
+*.log
+
+# Testing
+coverage/
+.pytest_cache/
+htmlcov/
+
+# OS
+Thumbs.db

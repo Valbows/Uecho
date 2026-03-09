@@ -1,0 +1,80 @@
+/* U:Echo — Content Script Styles */
+
+#uecho-overlay-root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 2147483646;
+}
+
+/* Grid overlay */
+.uecho-grid-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.uecho-grid-cell {
+  position: absolute;
+  border: 1px solid rgba(19, 146, 236, 0.15);
+  box-sizing: border-box;
+  transition: background-color 0.1s ease;
+}
+
+.uecho-grid-cell:hover {
+  background-color: rgba(19, 146, 236, 0.08);
+}
+
+.uecho-grid-cell.selected {
+  background-color: rgba(19, 146, 236, 0.20);
+  border-color: rgba(19, 146, 236, 0.5);
+}
+
+/* Div-box overlay */
+.uecho-element-highlight {
+  position: absolute;
+  border: 2px solid #1392ec;
+  background-color: rgba(19, 146, 236, 0.08);
+  pointer-events: none;
+  transition: all 0.15s ease;
+  border-radius: 2px;
+}
+
+.uecho-element-highlight.active {
+  border-color: #0b78d4;
+  background-color: rgba(19, 146, 236, 0.15);
+}
+
+/* Selection handles */
+.uecho-resize-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #1392ec;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  pointer-events: all;
+  cursor: pointer;
+  z-index: 2147483647;
+}
+
+/* Tooltip */
+.uecho-tooltip {
+  position: absolute;
+  background: #0f172a;
+  color: #fff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2147483647;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
