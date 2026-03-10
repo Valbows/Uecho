@@ -93,3 +93,21 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-10] [BUG] [INTENT] — resize_right/resize_bottom used hardcoded "+" prefix causing "+-5px" → switched to {:+.0f} signed format`
 - `[2026-03-10] [BUG] [MODELS] — target_dimensions typed as dict while current_dimensions was BoundingBox → unified to BoundingBox, updated builder/verifier/tests`
 - `[2026-03-10] [INFO] [TEST] — Full suite after hardening: extension 104, backend 65, MCP bridge 18 = 187 total, 0 failures`
+
+### Phase 6: Side Panel Chat & Voice Integration
+- `[2026-03-10] [INFO] [VOICE] — useVoiceInput hook: Web Speech API (SpeechRecognition/webkitSpeechRecognition), idle/listening/processing/error states`
+- `[2026-03-10] [INFO] [VOICE] — Graceful fallback when API unavailable (isSupported=false), continuous mode, interim results, lang=en-US`
+- `[2026-03-10] [INFO] [VOICE] — speech-recognition.d.ts type declarations for SpeechRecognition, SpeechRecognitionEvent, SpeechRecognitionErrorEvent`
+- `[2026-03-10] [INFO] [CHAT] — useChatStore hook: extracted chat state from AgentScreen into reusable hook with messages, input, processing state`
+- `[2026-03-10] [INFO] [CHAT] — Listens for SW_INTENT_POPULATE and SW_AGENT_RESPONSE messages, auto-scrolls on new messages`
+- `[2026-03-10] [INFO] [UI] — AgentScreen refactored: uses useChatStore + useVoiceInput hooks, added VoiceButton with mic SVG icon`
+- `[2026-03-10] [INFO] [UI] — Voice status indicators: red pulsing "Listening" badge in header, red border glow on textarea, animated ping on mic button`
+- `[2026-03-10] [INFO] [UI] — Voice auto-populates input textarea on final transcript, stops on send`
+- `[2026-03-10] [INFO] [TEST] — 7 new voice/chat hook tests: API detection, module contracts, unsupported browser behavior`
+- `[2026-03-10] [INFO] [TEST] — Full suite: extension 111, backend 65, MCP bridge 18 = 194 total, 0 failures`
+
+### Phase 6 Hardening: Code Review Fixes
+- `[2026-03-10] [BUG] [TEST] — voice-input.test.ts: "should report isSupported as false" title misleading — renamed to "detects absence of SpeechRecognition API in test environment"`
+- `[2026-03-10] [BUG] [CHAT] — useChatStore: Date.now() IDs can collide on rapid inserts → added module-level _msgIdCounter, generateMsgId(prefix) produces unique IDs`
+- `[2026-03-10] [BUG] [VOICE] — useVoiceInput: onTranscript called inside setTranscript updater → React may invoke updaters twice in Strict/concurrent mode → added transcriptRef, moved callback outside updater`
+- `[2026-03-10] [INFO] [TEST] — Full suite after hardening: extension 111, backend 65, MCP bridge 18 = 194 total, 0 failures`

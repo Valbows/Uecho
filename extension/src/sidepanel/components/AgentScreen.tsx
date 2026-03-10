@@ -1,5 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
-import type { ChatMessage, GestureEvent, PromptSchema } from '@shared/types';
+import React from 'react';
+import type { ChatMessage, PromptSchema } from '@shared/types';
+import { useChatStore } from '../hooks/useChatStore';
+import { useVoiceInput } from '../hooks/useVoiceInput';
+import type { VoiceStatus } from '../hooks/useVoiceInput';
 
 interface AgentScreenProps {
   onSubmitText: (text: string) => void;
@@ -12,86 +15,27 @@ const AgentScreen: React.FC<AgentScreenProps> = ({
   onEnhanceText,
   onNavigateToVerify,
 }) => {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'system-1',
-      role: 'system',
-      content: 'Echo AI ready. Select an element on the page to begin.',
-      timestamp: Date.now(),
+  const chat = useChatStore({ onSubmitText, onEnhanceText });
+
+  const voice = useVoiceInput({
+    onTranscript: (text, isFinal) => {
+      if (isFinal) {
+        chat.setInputText(text);
+      }
     },
-  ]);
-  const [inputText, setInputText] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  useEffect(() => {
-    const listener = (message: { type: string; payload: unknown }) => {
-      if (message.type === 'SW_INTENT_POPULATE') {
-        const payload = message.payload as {
-          intent_text: string;
-          gesture: GestureEvent;
-        };
-        setInputText(payload.intent_text);
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `system-${Date.now()}`,
-            role: 'system',
-            content: `Gesture translated into plain English:\n"${payload.intent_text}"`,
-            timestamp: Date.now(),
-            metadata: { gesture_event: payload.gesture },
-          },
-        ]);
-      }
-
-      if (message.type === 'SW_AGENT_RESPONSE') {
-        setIsProcessing(false);
-        const resp = message.payload as {
-          interpreted_intent: string;
-          prompt?: PromptSchema;
-          status: string;
-        };
-
-        const assistantMsg: ChatMessage = {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          content: resp.prompt
-            ? "I've generated the structured prompt. Ready to review and send to your IDE."
-            : resp.interpreted_intent || 'Processing complete.',
-          timestamp: Date.now(),
-          metadata: resp.prompt ? { prompt: resp.prompt } : undefined,
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(listener);
-    return () => chrome.runtime.onMessage.removeListener(listener);
-  }, []);
+    onError: (error) => {
+      console.warn('[U:Echo] Voice error:', error);
+    },
+  });
 
   const handleSend = () => {
-    if (!inputText.trim()) return;
-
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: inputText.trim(),
-      timestamp: Date.now(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    setIsProcessing(true);
-    onSubmitText(inputText.trim());
-    setInputText('');
+    voice.stopListening();
+    voice.clearTranscript();
+    chat.sendMessage(chat.inputText);
   };
 
   const handleEnhance = () => {
-    if (!inputText.trim()) return;
-    onEnhanceText(inputText.trim());
+    chat.enhanceText(chat.inputText);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -116,19 +60,29 @@ const AgentScreen: React.FC<AgentScreenProps> = ({
             </span>
           </div>
         </div>
-        {isProcessing && (
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-primary/10 rounded-full">
-            <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-            <span className="text-[10px] font-medium text-primary">
-              Processing
-            </span>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {voice.status === 'listening' && (
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-echo-error/10 rounded-full">
+              <div className="w-1.5 h-1.5 rounded-full bg-echo-error animate-pulse" />
+              <span className="text-[10px] font-medium text-echo-error">
+                Listening
+              </span>
+            </div>
+          )}
+          {chat.isProcessing && (
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-primary/10 rounded-full">
+              <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+              <span className="text-[10px] font-medium text-primary">
+                Processing
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-3 pb-3">
-        {messages.map((msg) => (
+        {chat.messages.map((msg) => (
           <MessageBubble
             key={msg.id}
             message={msg}
@@ -139,45 +93,103 @@ const AgentScreen: React.FC<AgentScreenProps> = ({
             }
           />
         ))}
-        <div ref={messagesEndRef} />
+        <div ref={chat.messagesEndRef} />
       </div>
 
       {/* Input Area */}
       <div className="border-t border-echo-border pt-3">
         <div className="flex gap-2">
           <textarea
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
+            value={chat.inputText}
+            onChange={(e) => chat.setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Describe your UI change..."
+            placeholder={
+              voice.status === 'listening'
+                ? 'Listening... speak your change'
+                : 'Describe your UI change...'
+            }
             rows={2}
-            className="flex-1 px-3 py-2 text-sm bg-echo-surface border border-echo-border rounded-lg
+            className={`flex-1 px-3 py-2 text-sm bg-echo-surface border rounded-lg
               resize-none focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50
-              placeholder:text-echo-text-muted"
+              placeholder:text-echo-text-muted ${
+                voice.status === 'listening'
+                  ? 'border-echo-error/40 ring-1 ring-echo-error/20'
+                  : 'border-echo-border'
+              }`}
           />
         </div>
         <div className="flex items-center gap-2 mt-2">
           <button
             onClick={handleEnhance}
-            disabled={!inputText.trim() || isProcessing}
+            disabled={!chat.inputText.trim() || chat.isProcessing}
             className="px-3 py-1.5 text-[11px] font-medium text-primary bg-primary/10 rounded-md
               hover:bg-primary/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             Enhance
           </button>
+          {voice.isSupported && (
+            <VoiceButton
+              status={voice.status}
+              onClick={voice.toggleListening}
+              disabled={chat.isProcessing}
+            />
+          )}
           <div className="flex-1" />
           <button
             onClick={handleSend}
-            disabled={!inputText.trim() || isProcessing}
+            disabled={!chat.inputText.trim() || chat.isProcessing}
             className="px-4 py-1.5 text-[11px] font-medium text-white bg-primary rounded-md
               hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors
               shadow-sm shadow-primary/20"
           >
-            {isProcessing ? 'Processing...' : 'Send'}
+            {chat.isProcessing ? 'Processing...' : 'Send'}
           </button>
         </div>
       </div>
     </div>
+  );
+};
+
+const VoiceButton: React.FC<{
+  status: VoiceStatus;
+  onClick: () => void;
+  disabled: boolean;
+}> = ({ status, onClick, disabled }) => {
+  const isListening = status === 'listening';
+  const isError = status === 'error';
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={isListening ? 'Stop listening' : 'Start voice input'}
+      className={`relative w-8 h-8 flex items-center justify-center rounded-md border transition-all
+        disabled:opacity-40 disabled:cursor-not-allowed ${
+          isListening
+            ? 'bg-echo-error/10 border-echo-error/30 text-echo-error'
+            : isError
+              ? 'bg-echo-warning/10 border-echo-warning/30 text-echo-warning'
+              : 'bg-echo-surface border-echo-border text-echo-text-secondary hover:border-primary/20 hover:text-primary'
+        }`}
+    >
+      {isListening && (
+        <span className="absolute inset-0 rounded-md border-2 border-echo-error/30 animate-ping" />
+      )}
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+        <line x1="12" x2="12" y1="19" y2="22" />
+      </svg>
+    </button>
   );
 };
 
