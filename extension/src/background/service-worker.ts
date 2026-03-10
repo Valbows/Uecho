@@ -1,18 +1,51 @@
 /**
  * U:Echo — Background Service Worker
  * Coordinates extension components, manages sessions, routes messages to backend.
+ * Uses ActionRecorder state machine, RequestQueue, and SessionManager.
  */
 
 import type {
   ContentScriptMessage,
   SidePanelMessage,
 } from '@shared/messages';
-import type { ConnectivityStatus, EchoSession } from '@shared/types';
+import type { ConnectivityStatus, ElementInfo } from '@shared/types';
 import { STORAGE_KEYS, API_ENDPOINTS } from '@shared/constants';
+import { ActionRecorder } from './recorder';
+import { RequestQueue } from './request-queue';
+import { SessionManager } from './session-manager';
 
 const BACKEND_URL = 'http://localhost:8080';
+const MCP_BRIDGE_URL = 'http://localhost:3939';
 
-let currentSession: EchoSession | null = null;
+// ─── Module Instances ───────────────────────────────────────────
+const sessionManager = new SessionManager();
+const recorders = new Map<number, ActionRecorder>();
+const requestQueue = new RequestQueue(BACKEND_URL);
+
+// Wire queue completion → recorder + side panel
+requestQueue.setUpdateCallback((request) => {
+  const tabRecorder = recorders.get(request.metadata.tab_id);
+  if (request.status === 'completed' && request.response) {
+    tabRecorder?.dispatch({ type: 'AGENT_RESPONSE', response: request.response });
+
+    chrome.runtime.sendMessage({
+      type: 'SW_AGENT_RESPONSE',
+      payload: request.response,
+    });
+
+    if (request.response.interpreted_intent) {
+      chrome.runtime.sendMessage({
+        type: 'SW_INTENT_POPULATE',
+        payload: {
+          intent_text: request.response.interpreted_intent,
+          gesture: request.metadata.gesture,
+        },
+      });
+    }
+  } else if (request.status === 'failed') {
+    tabRecorder?.dispatch({ type: 'ERROR', message: request.error || 'Unknown error' });
+  }
+});
 
 // ─── Side Panel Behavior ────────────────────────────────────────
 chrome.sidePanel
@@ -41,51 +74,50 @@ async function handleMessage(
       // ─── From Content Script ────────────────────────────
       case 'CS_GESTURE_EVENT': {
         const tabId = sender.tab?.id;
+        const pageUrl = sender.tab?.url || '';
         if (!tabId) break;
 
-        // Capture screenshot
-        const screenshotUrl = await captureScreenshot(tabId);
-
-        // Forward to backend
-        const response = await fetch(
-          `${BACKEND_URL}${API_ENDPOINTS.processGesture}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              gesture: message.payload.gesture,
-              screenshot_url: screenshotUrl,
-              tab_id: tabId,
-              page_url: sender.tab?.url || '',
-              scroll_x: message.payload.scroll_x,
-              scroll_y: message.payload.scroll_y,
-              viewport_width: message.payload.viewport_width,
-              viewport_height: message.payload.viewport_height,
-              extension_session_id: currentSession?.session_id || '',
-            }),
-          }
-        );
-
-        const agentResponse = await response.json();
-
-        // Forward agent response to side panel
-        chrome.runtime.sendMessage({
-          type: 'SW_AGENT_RESPONSE',
-          payload: agentResponse,
-        });
-
-        // Auto-populate side panel with intent
-        if (agentResponse.interpreted_intent) {
-          chrome.runtime.sendMessage({
-            type: 'SW_INTENT_POPULATE',
-            payload: {
-              intent_text: agentResponse.interpreted_intent,
-              gesture: message.payload.gesture,
-            },
-          });
+        // Ensure per-tab session + recorder
+        const session = await sessionManager.getOrCreate(pageUrl);
+        let recorder = recorders.get(tabId);
+        if (!recorder) {
+          recorder = new ActionRecorder(session.session_id);
+          recorders.set(tabId, recorder);
+          recorder.dispatch({ type: 'START_RECORDING', tabId, pageUrl });
         }
 
-        sendResponse({ ok: true });
+        // Dispatch gesture into recorder
+        recorder.dispatch({
+          type: 'GESTURE_CAPTURED',
+          gesture: message.payload.gesture,
+          scrollX: message.payload.scroll_x,
+          scrollY: message.payload.scroll_y,
+          viewportWidth: message.payload.viewport_width,
+          viewportHeight: message.payload.viewport_height,
+          elementInfo: (message.payload as { element_info?: ElementInfo }).element_info,
+        });
+
+        // Capture screenshot — fail loudly if empty
+        const screenshotUrl = await captureScreenshot(tabId);
+        if (!screenshotUrl) {
+          recorder.dispatch({ type: 'ERROR', message: 'Screenshot capture returned empty' });
+          sendResponse({ ok: false, error: 'Screenshot capture failed', state: recorder.getState() });
+          break;
+        }
+        recorder.dispatch({ type: 'SCREENSHOT_READY', screenshotUrl });
+
+        // Validate metadata before enqueuing
+        const metadata = recorder.getContext().metadata;
+        if (!metadata) {
+          recorder.dispatch({ type: 'ERROR', message: 'Metadata assembly failed after gesture capture' });
+          sendResponse({ ok: false, error: 'Metadata assembly failed', state: recorder.getState() });
+          break;
+        }
+
+        recorder.dispatch({ type: 'PROCESSING_START' });
+        requestQueue.enqueue(metadata);
+
+        sendResponse({ ok: true, state: recorder.getState() });
         break;
       }
 
@@ -101,9 +133,26 @@ async function handleMessage(
           currentWindow: true,
         });
         if (tab?.id) {
+          const session = await sessionManager.getOrCreate(tab.url || '');
+          await sessionManager.updateMode(message.payload.mode);
+          await sessionManager.setAgentActive(true);
+
+          const tabRecorder = new ActionRecorder(session.session_id);
+          recorders.set(tab.id, tabRecorder);
+          tabRecorder.dispatch({
+            type: 'START_RECORDING',
+            tabId: tab.id,
+            pageUrl: tab.url || '',
+          });
+
           chrome.tabs.sendMessage(tab.id, {
             type: 'SW_ACTIVATE_OVERLAY',
             payload: { mode: message.payload.mode },
+          });
+
+          chrome.runtime.sendMessage({
+            type: 'SW_SESSION_UPDATE',
+            payload: session,
           });
         }
         sendResponse({ ok: true });
@@ -120,7 +169,40 @@ async function handleMessage(
             type: 'SW_DEACTIVATE_OVERLAY',
           });
         }
+        await sessionManager.updateMode('off');
+        await sessionManager.setAgentActive(false);
+        if (tab?.id) {
+          recorders.get(tab.id)?.dispatch({ type: 'RESET' });
+          recorders.delete(tab.id);
+        }
         sendResponse({ ok: true });
+        break;
+      }
+
+      case 'SP_SUBMIT_TEXT': {
+        // Forward text to enhance endpoint
+        try {
+          const enhanceRes = await fetch(
+            `${BACKEND_URL}${API_ENDPOINTS.enhanceText}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                text: message.payload.text,
+                metadata: message.payload.metadata || {},
+              }),
+            }
+          );
+          if (!enhanceRes.ok) {
+            const errorBody = await enhanceRes.text();
+            sendResponse({ ok: false, status: enhanceRes.status, error: errorBody });
+            break;
+          }
+          const enhanced = await enhanceRes.json();
+          sendResponse({ ok: true, ...enhanced });
+        } catch (error) {
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        }
         break;
       }
 
@@ -135,9 +217,67 @@ async function handleMessage(
       }
 
       case 'SP_CONFIRM_PROMPT': {
-        // TODO: Phase 7 — forward to MCP bridge
-        console.log('[U:Echo SW] Prompt confirmed, sending to IDE...');
-        sendResponse({ ok: true, sent: false, reason: 'MCP bridge not yet implemented' });
+        // Forward to MCP bridge
+        try {
+          const mcpRes = await fetch(`${MCP_BRIDGE_URL}/prompt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt_text: message.payload.prompt.prompt_text,
+              feature_name: message.payload.prompt.feature_name,
+              selector: message.payload.prompt.selector,
+              action_type: message.payload.prompt.action_type,
+              ide_target: message.payload.ide_target,
+              metadata: {
+                session_id: sessionManager.getCurrent()?.session_id,
+              },
+            }),
+          });
+          const result = await mcpRes.json();
+          sendResponse({ ok: true, ...result });
+        } catch (error) {
+          sendResponse({ ok: false, error: String(error) });
+        }
+        break;
+      }
+
+      case 'SP_UPDATE_SETTINGS': {
+        const current = await chrome.storage.local.get(STORAGE_KEYS.settings);
+        const merged = { ...current[STORAGE_KEYS.settings], ...message.payload };
+        await chrome.storage.local.set({ [STORAGE_KEYS.settings]: merged });
+
+        // If overlay mode changed, update session and content script
+        if (message.payload.overlay_mode) {
+          await sessionManager.updateMode(message.payload.overlay_mode);
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (tab?.id) {
+            chrome.tabs.sendMessage(tab.id, {
+              type: 'SW_UPDATE_OVERLAY_MODE',
+              payload: { mode: message.payload.overlay_mode },
+            });
+          }
+        }
+        sendResponse({ ok: true });
+        break;
+      }
+
+      case 'SP_EXPORT_CSV': {
+        try {
+          const sid = message.payload.session_id;
+          const exportRes = await fetch(
+            `${BACKEND_URL}${API_ENDPOINTS.exportCsv}${sid ? `?session_id=${encodeURIComponent(sid)}` : ''}`,
+            { method: 'GET' }
+          );
+          if (!exportRes.ok) {
+            const errorBody = await exportRes.text();
+            sendResponse({ ok: false, status: exportRes.status, error: errorBody });
+            break;
+          }
+          const exportData = await exportRes.json();
+          sendResponse({ ok: true, ...exportData });
+        } catch (error) {
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        }
         break;
       }
 
@@ -147,6 +287,10 @@ async function handleMessage(
     }
   } catch (error) {
     console.error('[U:Echo SW] Message handler error:', error);
+    const errorTabId = sender.tab?.id;
+    if (errorTabId) {
+      recorders.get(errorTabId)?.dispatch({ type: 'ERROR', message: String(error) });
+    }
     sendResponse({ ok: false, error: String(error) });
   }
 }
@@ -185,7 +329,7 @@ async function checkConnectivity(): Promise<ConnectivityStatus> {
   }
 
   try {
-    const mcpRes = await fetch('http://localhost:3939/health', {
+    const mcpRes = await fetch(`${MCP_BRIDGE_URL}/health`, {
       method: 'GET',
       signal: AbortSignal.timeout(3000),
     });
@@ -210,6 +354,11 @@ chrome.runtime.onInstalled.addListener((details) => {
       },
     });
   }
+});
+
+// ─── Tab Cleanup ────────────────────────────────────────────────
+chrome.tabs.onRemoved.addListener((tabId) => {
+  recorders.delete(tabId);
 });
 
 console.log('[U:Echo SW] Service worker loaded');

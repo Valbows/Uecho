@@ -64,6 +64,28 @@
   z-index: 2147483647;
 }
 
+/* Handles container */
+.uecho-handles-container {
+  pointer-events: none;
+}
+
+/* Move handle */
+.uecho-move-handle {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.uecho-handles-container:hover .uecho-move-handle {
+  opacity: 0.05;
+  background-color: #1392ec;
+}
+
+/* Grid selection cells */
+.uecho-grid-selected {
+  pointer-events: none;
+  transition: all 0.05s ease;
+}
+
 /* Tooltip */
 .uecho-tooltip {
   position: absolute;
