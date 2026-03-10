@@ -3,16 +3,38 @@ U:Echo — FastAPI Backend Routes
 REST API endpoints for the agent pipeline.
 """
 
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
 
+logger = logging.getLogger(__name__)
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+
+from .models import (
+    BoundingBox,
+    GestureDelta,
+    GestureEvent,
+    MetadataPayload,
+    PromptSchema,
+    VerificationResult,
+    AgentResponse,
+    TextEnhanceRequest,
+    SendToIdeRequest,
+)
+from ..agents.intent_interpreter import interpret_intent
+from ..agents.prompt_builder import build_prompt
+from ..agents.verification import verify_prompt
+from ..embedding.embedder import embed_gesture
+from ..storage.example_store import create_seeded_store
 
 load_dotenv()
+
+# ─── Initialize Vector Store with seed examples ─────────────────
+_vector_store = create_seeded_store()
 
 app = FastAPI(
     title="U:Echo Backend",
@@ -31,94 +53,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# ─── Request / Response Models ───────────────────────────────────
-class BoundingBox(BaseModel):
-    x: float
-    y: float
-    width: float
-    height: float
-
-
-class GestureDelta(BaseModel):
-    resize_right: float | None = None
-    resize_bottom: float | None = None
-    resize_left: float | None = None
-    resize_top: float | None = None
-    move_x: float | None = None
-    move_y: float | None = None
-
-
-class GestureEvent(BaseModel):
-    type: str
-    selector: str
-    before_bbox: BoundingBox
-    after_bbox: BoundingBox
-    delta: GestureDelta
-    grid_cell: dict | None = None
-    timestamp: float
-
-
-class MetadataPayload(BaseModel):
-    gesture: GestureEvent
-    screenshot_url: str = ""
-    tab_id: int
-    page_url: str
-    scroll_x: float = 0
-    scroll_y: float = 0
-    viewport_width: float = 0
-    viewport_height: float = 0
-    extension_session_id: str = ""
-
-
-class PromptSchema(BaseModel):
-    feature_name: str
-    selector: str
-    component_path: str | None = None
-    action_type: str
-    current_dimensions: BoundingBox
-    target_dimensions: dict
-    gesture_delta: GestureDelta | None = None
-    visual_change_description: str
-    non_visual_changes: str | None = None
-    screenshots: list[str] = []
-    retrieved_examples_used: list[str] = []
-    risk_notes: str | None = None
-    open_questions: str | None = None
-    tab_url: str = ""
-    route_path: str | None = None
-    scroll_position: dict = Field(default_factory=lambda: {"x": 0, "y": 0})
-    extension_session_id: str = ""
-    prompt_text: str = ""
-
-
-class VerificationResult(BaseModel):
-    schema_valid: bool
-    safety_passed: bool
-    consistency_passed: bool
-    semantic_drift_score: float
-    drift_warning: bool
-    errors: list[str] = []
-    warnings: list[str] = []
-
-
-class AgentResponse(BaseModel):
-    interpreted_intent: str = ""
-    prompt: PromptSchema | None = None
-    verification: VerificationResult | None = None
-    status: str = "success"
-    error_message: str | None = None
-
-
-class TextEnhanceRequest(BaseModel):
-    text: str
-    metadata: dict | None = None
-
-
-class SendToIdeRequest(BaseModel):
-    prompt: PromptSchema
-    ide_target: str = "windsurf"
 
 
 # ─── Health ──────────────────────────────────────────────────────
@@ -144,21 +78,37 @@ async def process_gesture(payload: MetadataPayload):
     5. Verification → schema + safety + drift check
     """
     try:
-        # TODO: Phase 5 — implement full ADK agent pipeline
-        # For now, return a stub response
-        gesture = payload.gesture
-        intent = (
-            f"{gesture.type} the element '{gesture.selector}' — "
-            f"moved from ({gesture.before_bbox.x:.0f}, {gesture.before_bbox.y:.0f}) "
-            f"to ({gesture.after_bbox.x:.0f}, {gesture.after_bbox.y:.0f})"
-        )
+        # 1. Interpret gesture → human-readable intent
+        intent = interpret_intent(payload)
+
+        # 2. Embed gesture for similarity search
+        gesture_vector = embed_gesture(payload)
+
+        # 3. Retrieve similar examples from vector store
+        results = _vector_store.search(gesture_vector)
+        retrieved_examples = [entry.text for entry, _score in results]
+
+        # 4. Build structured prompt
+        prompt = build_prompt(payload, intent, retrieved_examples)
+
+        # 5. Verify prompt quality
+        verification = verify_prompt(prompt, intent)
+
+        status = "success"
+        if not verification.schema_valid or not verification.safety_passed:
+            status = "error"
+        elif verification.drift_warning:
+            status = "needs_review"
 
         return AgentResponse(
             interpreted_intent=intent,
-            status="success",
+            prompt=prompt,
+            verification=verification,
+            status=status,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("process_gesture failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─── Enhance Text ────────────────────────────────────────────────
@@ -172,7 +122,8 @@ async def enhance_text(request: TextEnhanceRequest):
             "suggestions": [],
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("enhance_text failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─── Upload Screenshot ───────────────────────────────────────────
@@ -187,7 +138,8 @@ async def upload_screenshot(file: UploadFile = File(...)):
             "filename": filename,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("upload_screenshot failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─── Send to IDE ─────────────────────────────────────────────────
@@ -202,7 +154,8 @@ async def send_to_ide(request: SendToIdeRequest):
             "prompt_id": str(uuid.uuid4()),
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("send_to_ide failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─── Export CSV ──────────────────────────────────────────────────
@@ -213,4 +166,5 @@ async def export_csv(session_id: str | None = None):
         # TODO: Phase 9 — implement Firestore query + CSV generation
         return {"download_url": "", "count": 0}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("export_csv failed")
+        raise HTTPException(status_code=500, detail="Internal server error")

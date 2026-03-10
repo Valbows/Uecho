@@ -70,3 +70,26 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-10] [BUG] [TEST] — request-queue.test.ts: global.fetch mock not restored by jest.restoreAllMocks → saved originalFetch, restored in afterEach`
 - `[2026-03-10] [INFO] [TEST] — Full suite: extension 104, backend 25, MCP bridge 18 = 147 total, 0 failures`
 - `[2026-03-10] [INFO] [TS] — Zero TypeScript compiler errors across all packages`
+
+### Phase 5: Backend Agents, Embeddings, Vector Search, Prompt Building
+- `[2026-03-10] [INFO] [MODELS] — Extracted Pydantic models to src/api/models.py to break circular import between routes ↔ agents`
+- `[2026-03-10] [INFO] [AGENT] — Intent interpreter: gesture metadata → human-readable intent with action verb, target description, magnitude, route`
+- `[2026-03-10] [INFO] [AGENT] — Prompt builder: assembles PromptSchema from metadata + intent + retrieved examples with markdown prompt_text`
+- `[2026-03-10] [INFO] [AGENT] — Verification engine: schema validation, safety checks (blocked selectors/keywords), consistency cross-checks, Jaccard drift scoring`
+- `[2026-03-10] [INFO] [AGENT] — Safety blocklist: html, body, head, script, style, meta, link, iframe, object, embed, applet + universal selector (*)`
+- `[2026-03-10] [INFO] [AGENT] — Blocked keywords: delete, drop, truncate, exec(, eval(, document.cookie, __proto__, constructor.prototype`
+- `[2026-03-10] [INFO] [EMBED] — Deterministic hash-based embedding (SHA-512 → L2-normalized 1408-dim vector). Swappable to Gemini/Jina in Phase 8`
+- `[2026-03-10] [INFO] [EMBED] — Cosine similarity search, in-memory VectorStore with configurable top_k (default 3)`
+- `[2026-03-10] [INFO] [STORE] — 10 seed examples covering resize, move, color, text, spacing, visibility categories`
+- `[2026-03-10] [INFO] [ROUTES] — /api/process-gesture wired to full 5-step pipeline: interpret → embed → search → build → verify`
+- `[2026-03-10] [INFO] [ROUTES] — Response status derived from verification: error if schema/safety fail, needs_review if drift warning, success otherwise`
+- `[2026-03-10] [INFO] [TEST] — 40 new agent pipeline tests: interpreter (7), builder (8), verification (8), embedding (7), vector store (6), example store (3), OWASP safety (1)`
+- `[2026-03-10] [INFO] [TEST] — Full suite: extension 104, backend 65, MCP bridge 18 = 187 total, 0 failures`
+
+### Phase 5 Hardening: Code Review Fixes
+- `[2026-03-10] [BUG] [VERIFY] — _check_safety selector parsing: chained .split() missed blocked elements in compound selectors → replaced with re.split on CSS delimiters`
+- `[2026-03-10] [BUG] [VERIFY] — _check_consistency: selector check was case-sensitive while action_type check was case-insensitive → normalized both to .lower()`
+- `[2026-03-10] [BUG] [ROUTES] — All 5 except blocks leaked str(e) to client → added logger.exception() server-side, return generic "Internal server error"`
+- `[2026-03-10] [BUG] [INTENT] — resize_right/resize_bottom used hardcoded "+" prefix causing "+-5px" → switched to {:+.0f} signed format`
+- `[2026-03-10] [BUG] [MODELS] — target_dimensions typed as dict while current_dimensions was BoundingBox → unified to BoundingBox, updated builder/verifier/tests`
+- `[2026-03-10] [INFO] [TEST] — Full suite after hardening: extension 104, backend 65, MCP bridge 18 = 187 total, 0 failures`

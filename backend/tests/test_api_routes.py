@@ -68,7 +68,7 @@ class TestProcessGestureEndpoint:
         data = client.post("/api/process-gesture", json=valid_gesture_payload).json()
         assert "interpreted_intent" in data
         assert "status" in data
-        assert data["status"] == "success"
+        assert data["status"] in ("success", "needs_review")
 
     def test_process_gesture_includes_selector_in_intent(self, valid_gesture_payload):
         data = client.post("/api/process-gesture", json=valid_gesture_payload).json()
@@ -76,7 +76,7 @@ class TestProcessGestureEndpoint:
 
     def test_process_gesture_includes_action_type_in_intent(self, valid_gesture_payload):
         data = client.post("/api/process-gesture", json=valid_gesture_payload).json()
-        assert "resize" in data["interpreted_intent"]
+        assert "resize" in data["interpreted_intent"].lower()
 
     def test_process_gesture_rejects_invalid_payload(self):
         response = client.post("/api/process-gesture", json={"invalid": True})
@@ -142,7 +142,7 @@ class TestSendToIdeEndpoint:
                 "selector": "h1.hero-title",
                 "action_type": "resize",
                 "current_dimensions": {"x": 0, "y": 0, "width": 200, "height": 40},
-                "target_dimensions": {"width": 240, "height": 48},
+                "target_dimensions": {"x": 0, "y": 0, "width": 240, "height": 48},
                 "visual_change_description": "Make 20% larger",
                 "screenshots": [],
                 "retrieved_examples_used": [],
@@ -208,7 +208,7 @@ class TestRequestPipeline:
         assert response.status_code == 200
 
         data = response.json()
-        assert data["status"] == "success"
+        assert data["status"] in ("success", "needs_review")
         assert len(data["interpreted_intent"]) > 0
         assert "#submit-btn" in data["interpreted_intent"]
 
