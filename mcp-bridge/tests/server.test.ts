@@ -5,6 +5,9 @@
 
 import request from 'supertest';
 import { app } from '../src/server';
+import { formatForIDE, SUPPORTED_IDES } from '../src/adapters';
+import type { PromptPayload } from '../src/adapters';
+import { clearQueue, queueSize, listPrompts } from '../src/queue';
 
 // ─── Unit Tests: Health Endpoint ─────────────────────────────────
 describe('MCP Bridge: Health Endpoint', () => {
@@ -25,7 +28,7 @@ describe('MCP Bridge: Health Endpoint', () => {
 
   it('should return version', async () => {
     const res = await request(app).get('/health');
-    expect(res.body.version).toBe('0.1.0');
+    expect(res.body.version).toBe('0.2.0');
   });
 
   it('should return ISO timestamp', async () => {
@@ -70,12 +73,15 @@ describe('MCP Bridge: Prompt Endpoint', () => {
     expect(res.body.prompt_id.length).toBeGreaterThan(0);
   });
 
-  it('should indicate delivery not yet implemented', async () => {
+  it('should return accepted/queued status and format', async () => {
     const res = await request(app)
       .post('/prompt')
       .send(validPayload);
+    expect(res.body.accepted).toBe(true);
     expect(res.body.delivered).toBe(false);
-    expect(res.body.reason).toContain('not yet implemented');
+    expect(res.body.queued).toBe(true);
+    expect(res.body.ide_target).toBe('windsurf');
+    expect(res.body.format).toBe('markdown');
   });
 
   it('should reject missing prompt_text with 400', async () => {
@@ -174,6 +180,174 @@ describe('MCP Bridge: Integration - Request Flow', () => {
         });
       expect(res.status).toBe(200);
     }
+  });
+});
+
+// ─── IDE Adapters ────────────────────────────────────────────────
+describe('MCP Bridge: IDE Adapters', () => {
+  const base: PromptPayload = {
+    prompt_id: 'test-id',
+    prompt_text: 'Resize element to 300x200',
+    feature_name: 'Enlarge Card',
+    selector: '.card-hero',
+    action_type: 'resize',
+    ide_target: 'windsurf',
+  };
+
+  it('should list supported IDEs', () => {
+    expect(SUPPORTED_IDES).toContain('windsurf');
+    expect(SUPPORTED_IDES).toContain('cursor');
+    expect(SUPPORTED_IDES).toContain('vscode');
+    expect(SUPPORTED_IDES).toContain('antigravity');
+  });
+
+  it('should format windsurf as markdown', () => {
+    const result = formatForIDE({ ...base, ide_target: 'windsurf' });
+    expect(result.format).toBe('markdown');
+    expect(result.content).toContain('## U:Echo Design Change');
+    expect(result.content).toContain('.card-hero');
+  });
+
+  it('should format cursor as markdown with @workspace', () => {
+    const result = formatForIDE({ ...base, ide_target: 'cursor' });
+    expect(result.format).toBe('markdown');
+    expect(result.content).toContain('@workspace');
+  });
+
+  it('should format vscode as JSON', () => {
+    const result = formatForIDE({ ...base, ide_target: 'vscode' });
+    expect(result.format).toBe('json');
+    const parsed = JSON.parse(result.content);
+    expect(parsed.selector).toBe('.card-hero');
+  });
+
+  it('should format antigravity as text', () => {
+    const result = formatForIDE({ ...base, ide_target: 'antigravity' });
+    expect(result.format).toBe('text');
+    expect(result.content).toContain('[U:Echo]');
+  });
+
+  it('should fall back to generic JSON for unknown IDEs', () => {
+    const result = formatForIDE({ ...base, ide_target: 'unknown-ide' });
+    expect(result.format).toBe('json');
+    expect(result.ide_target).toBe('unknown-ide');
+  });
+
+  it('should include prompt_id in metadata', () => {
+    const result = formatForIDE(base);
+    expect(result.metadata.prompt_id).toBe('test-id');
+  });
+});
+
+// ─── Prompt Queue ────────────────────────────────────────────────
+describe('MCP Bridge: Prompt Queue', () => {
+  beforeEach(() => {
+    clearQueue();
+  });
+
+  it('should track queue size after submissions', async () => {
+    const before = queueSize();
+    await request(app).post('/prompt').send({
+      prompt_text: 'Test', feature_name: 'F', selector: '.x', action_type: 'resize', ide_target: 'windsurf',
+    });
+    expect(queueSize()).toBe(before + 1);
+  });
+
+  it('should return delivered prompts in history', async () => {
+    await request(app).post('/prompt').send({
+      prompt_text: 'Test', feature_name: 'F', selector: '.x', action_type: 'resize', ide_target: 'windsurf',
+    });
+    const history = await request(app).get('/prompts');
+    expect(history.status).toBe(200);
+    expect(history.body.prompts.length).toBeGreaterThan(0);
+    expect(history.body.prompts[0].status).toBe('queued');
+  });
+
+  it('should filter prompts by status', async () => {
+    await request(app).post('/prompt').send({
+      prompt_text: 'T1', feature_name: 'F1', selector: '.a', action_type: 'resize', ide_target: 'windsurf',
+    });
+    const res = await request(app).get('/prompts?status=queued');
+    expect(Array.isArray(res.body.prompts)).toBe(true);
+    expect(res.body.prompts.length).toBeGreaterThan(0);
+    expect(res.body.prompts.every((p: { status: string }) => p.status === 'queued')).toBe(true);
+  });
+
+  it('should filter prompts by ide_target', async () => {
+    await request(app).post('/prompt').send({
+      prompt_text: 'T1', feature_name: 'F1', selector: '.a', action_type: 'resize', ide_target: 'cursor',
+    });
+    const res = await request(app).get('/prompts?ide_target=cursor');
+    expect(Array.isArray(res.body.prompts)).toBe(true);
+    expect(res.body.prompts.length).toBeGreaterThan(0);
+    expect(res.body.prompts.every((p: { ide_target: string }) => p.ide_target === 'cursor')).toBe(true);
+  });
+});
+
+// ─── Prompt Detail ───────────────────────────────────────────────
+describe('MCP Bridge: Prompt Detail', () => {
+  beforeEach(() => {
+    clearQueue();
+  });
+
+  it('should retrieve a prompt by ID', async () => {
+    const submitRes = await request(app).post('/prompt').send({
+      prompt_text: 'Detail test', feature_name: 'Detail', selector: '.d', action_type: 'color', ide_target: 'vscode',
+    });
+    const id = submitRes.body.prompt_id;
+    const detailRes = await request(app).get(`/prompts/${id}`);
+    expect(detailRes.status).toBe(200);
+    expect(detailRes.body.prompt_id).toBe(id);
+    expect(detailRes.body.formatted).toBeDefined();
+  });
+
+  it('should return 404 for unknown prompt ID', async () => {
+    const res = await request(app).get('/prompts/nonexistent-id');
+    expect(res.status).toBe(404);
+  });
+});
+
+// ─── SSE Events ─────────────────────────────────────────────────
+describe('MCP Bridge: SSE Events', () => {
+  it('should return event-stream content type and connected event', (done) => {
+    const server = app.listen(0, async () => {
+      try {
+        const addr = server.address() as { port: number };
+        const url = `http://127.0.0.1:${addr.port}/events`;
+
+        const res = await fetch(url);
+        expect(res.headers.get('content-type')).toContain('text/event-stream');
+
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+
+        try {
+          const { value } = await reader.read();
+          const text = decoder.decode(value);
+          expect(text).toContain('event: connected');
+        } finally {
+          await reader.cancel();
+        }
+
+        server.close(done);
+      } catch (err) {
+        server.close(() => done(err));
+      }
+    });
+  }, 10000);
+});
+
+// ─── Health Extended ─────────────────────────────────────────────
+describe('MCP Bridge: Health Extended', () => {
+  it('should include supported_ides in health', async () => {
+    const res = await request(app).get('/health');
+    expect(res.body.supported_ides).toBeDefined();
+    expect(res.body.supported_ides).toContain('windsurf');
+  });
+
+  it('should include queue_size in health', async () => {
+    const res = await request(app).get('/health');
+    expect(typeof res.body.queue_size).toBe('number');
   });
 });
 

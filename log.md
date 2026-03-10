@@ -111,3 +111,27 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-10] [BUG] [CHAT] — useChatStore: Date.now() IDs can collide on rapid inserts → added module-level _msgIdCounter, generateMsgId(prefix) produces unique IDs`
 - `[2026-03-10] [BUG] [VOICE] — useVoiceInput: onTranscript called inside setTranscript updater → React may invoke updaters twice in Strict/concurrent mode → added transcriptRef, moved callback outside updater`
 - `[2026-03-10] [INFO] [TEST] — Full suite after hardening: extension 111, backend 65, MCP bridge 18 = 194 total, 0 failures`
+
+### Phase 7: IDE/MCP Bridge & Export
+- `[2026-03-10] [INFO] [ADAPTER] — IDE adapters: Windsurf (markdown/Cascade), Cursor (markdown/@workspace), VS Code (JSON/Copilot), Antigravity (plain text), generic fallback`
+- `[2026-03-10] [INFO] [QUEUE] — In-memory prompt queue: queued→delivered|failed lifecycle, enqueue/markDelivered/markFailed/listPrompts/getPrompt`
+- `[2026-03-10] [INFO] [MCP] — MCP bridge v0.2.0: POST /prompt routes through IDE adapter + queue, returns delivered=true with format`
+- `[2026-03-10] [INFO] [MCP] — GET /prompts history endpoint with ?status, ?ide_target, ?limit filters; GET /prompts/:id detail with formatted prompt`
+- `[2026-03-10] [INFO] [MCP] — GET /events SSE endpoint: broadcasts prompt_delivered events to connected clients`
+- `[2026-03-10] [INFO] [MCP] — Health extended: supported_ides list, queue_size counter`
+- `[2026-03-10] [INFO] [BACKEND] — /api/send-to-ide wired to MCP bridge via httpx.AsyncClient; returns 502 on bridge error, 503 on ConnectError`
+- `[2026-03-10] [INFO] [TEST] — Backend send-to-ide tests: mocked httpx, added 503 bridge-down test (66 total)`
+- `[2026-03-10] [INFO] [TEST] — MCP bridge: 34 tests (adapters 7, queue 4, detail 2, SSE 1, health-ext 2, existing 18)`
+- `[2026-03-10] [INFO] [TEST] — Full suite: extension 111, backend 66, MCP bridge 34 = 211 total, 0 failures`
+
+### Phase 7 Hardening: Code Review Fixes
+- `[2026-03-10] [BUG] [MCP] — SSE /events route lacked authMiddleware → added authMiddleware to protect SSE endpoint`
+- `[2026-03-10] [BUG] [MCP] — broadcastSSE could throw on dead sockets → added writableEnded/writableFinished check, try/catch with destroy, res.on('error') cleanup listener`
+- `[2026-03-10] [BUG] [MCP] — POST /prompt returned delivered:true immediately without IDE confirmation → changed to accepted:true, delivered:false, queued:true; broadcast prompt_queued instead of prompt_delivered; removed premature markDelivered call`
+- `[2026-03-10] [BUG] [MCP] — GET /prompts query params (status, ide_target, limit) unsafely cast → added whitelist validation for status, type check for ide_target, NaN/negative/max clamp for limit`
+- `[2026-03-10] [BUG] [TEST] — Filter tests used .every() which vacuously passes on empty arrays → added Array.isArray + length > 0 assertions before .every()`
+- `[2026-03-10] [BUG] [TEST] — SSE test lacked error handling, could hang on failure → rewrote with async/await + try/catch/finally, guaranteed server.close in error paths`
+- `[2026-03-10] [BUG] [QUEUE] — In-memory queue grew unbounded → added MAX_QUEUE_SIZE=500, _evictTerminal LRU eviction, purgeTerminal TTL cleanup (30min default)`
+- `[2026-03-10] [BUG] [QUEUE] — enqueue silently overwrote duplicate prompt_id → added _queue.has() guard, throws Error on duplicate`
+- `[2026-03-10] [BUG] [QUEUE] — _evictTerminal only removed terminal entries, queue could exceed MAX_QUEUE_SIZE if all queued → added fallback to evict oldest queued entries`
+- `[2026-03-10] [INFO] [TEST] — Full suite after hardening: extension 111, backend 66, MCP bridge 34 = 211 total, 0 failures`

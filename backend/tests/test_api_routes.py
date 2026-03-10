@@ -4,6 +4,7 @@ Tests all FastAPI endpoints for correct request/response contracts.
 """
 
 import pytest
+from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
 from src.api.routes import app
@@ -154,14 +155,52 @@ class TestSendToIdeEndpoint:
             "ide_target": "windsurf",
         }
 
+    @staticmethod
+    def _mock_bridge_response():
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "accepted": True,
+            "delivered": False,
+            "queued": True,
+            "prompt_id": "bridge-test-001",
+            "ide_target": "windsurf",
+            "format": "markdown",
+        }
+        return mock_resp
+
     def test_send_to_ide_returns_200(self, valid_prompt_payload):
-        response = client.post("/api/send-to-ide", json=valid_prompt_payload)
+        mock_resp = self._mock_bridge_response()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            response = client.post("/api/send-to-ide", json=valid_prompt_payload)
         assert response.status_code == 200
 
     def test_send_to_ide_returns_prompt_id(self, valid_prompt_payload):
-        data = client.post("/api/send-to-ide", json=valid_prompt_payload).json()
+        mock_resp = self._mock_bridge_response()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            data = client.post("/api/send-to-ide", json=valid_prompt_payload).json()
         assert "prompt_id" in data
-        assert len(data["prompt_id"]) > 0
+        assert data["prompt_id"] == "bridge-test-001"
+
+    def test_send_to_ide_returns_503_when_bridge_down(self, valid_prompt_payload):
+        """send-to-ide should return 503 when MCP bridge is unreachable."""
+        import httpx as _httpx
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=_httpx.ConnectError("Connection refused"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            response = client.post("/api/send-to-ide", json=valid_prompt_payload)
+        assert response.status_code == 503
 
 
 # ─── Unit Tests: Export CSV Endpoint ─────────────────────────────

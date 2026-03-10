@@ -8,6 +8,8 @@ import os
 import uuid
 from datetime import datetime, timezone
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
@@ -143,16 +145,36 @@ async def upload_screenshot(file: UploadFile = File(...)):
 
 
 # ─── Send to IDE ─────────────────────────────────────────────────
+MCP_BRIDGE_URL = os.getenv("MCP_BRIDGE_URL", "http://localhost:3939")
+
 @app.post("/api/send-to-ide")
 async def send_to_ide(request: SendToIdeRequest):
     """Forward confirmed prompt to MCP bridge."""
     try:
-        # TODO: Phase 7 — forward to MCP bridge at localhost:3939
-        return {
-            "sent": False,
-            "reason": "MCP bridge integration not yet implemented",
-            "prompt_id": str(uuid.uuid4()),
+        payload = {
+            "prompt_text": request.prompt.prompt_text,
+            "feature_name": request.prompt.feature_name,
+            "selector": request.prompt.selector,
+            "action_type": request.prompt.action_type,
+            "ide_target": request.ide_target,
+            "metadata": request.prompt.metadata if hasattr(request.prompt, "metadata") else None,
         }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(f"{MCP_BRIDGE_URL}/prompt", json=payload)
+            resp.raise_for_status()
+            bridge_result = resp.json()
+        return {
+            "sent": bridge_result.get("delivered", False),
+            "prompt_id": bridge_result.get("prompt_id"),
+            "ide_target": bridge_result.get("ide_target"),
+            "format": bridge_result.get("format"),
+        }
+    except httpx.HTTPStatusError as e:
+        logger.exception("MCP bridge returned error")
+        raise HTTPException(status_code=502, detail="MCP bridge error")
+    except httpx.ConnectError:
+        logger.warning("MCP bridge unreachable at %s", MCP_BRIDGE_URL)
+        raise HTTPException(status_code=503, detail="MCP bridge unavailable")
     except Exception as e:
         logger.exception("send_to_ide failed")
         raise HTTPException(status_code=500, detail="Internal server error")
