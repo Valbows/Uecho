@@ -13,8 +13,15 @@ import { STORAGE_KEYS, API_ENDPOINTS } from '@shared/constants';
 import { ActionRecorder } from './recorder';
 import { RequestQueue } from './request-queue';
 import { SessionManager } from './session-manager';
+import {
+  validateMessage,
+  validateSubmitText,
+  validateConfirmPrompt,
+  validateActivateAgent,
+  sanitizeString,
+} from './message-validator';
 
-const BACKEND_URL = 'http://localhost:8080';
+const BACKEND_URL = 'http://localhost:8000';
 const MCP_BRIDGE_URL = 'http://localhost:3939';
 
 // ─── Module Instances ───────────────────────────────────────────
@@ -69,6 +76,14 @@ async function handleMessage(
   sender: chrome.runtime.MessageSender,
   sendResponse: (response: unknown) => void
 ): Promise<void> {
+  // Runtime message validation
+  const validation = validateMessage(message, sender);
+  if (!validation.valid) {
+    console.warn('[U:Echo SW] Message rejected:', validation.error);
+    sendResponse({ ok: false, error: validation.error });
+    return;
+  }
+
   try {
     switch (message.type) {
       // ─── From Content Script ────────────────────────────
@@ -128,6 +143,11 @@ async function handleMessage(
 
       // ─── From Side Panel ────────────────────────────────
       case 'SP_ACTIVATE_AGENT': {
+        const activateCheck = validateActivateAgent(message.payload);
+        if (!activateCheck.valid) {
+          sendResponse({ ok: false, error: activateCheck.error });
+          break;
+        }
         const [tab] = await chrome.tabs.query({
           active: true,
           currentWindow: true,
@@ -180,6 +200,11 @@ async function handleMessage(
       }
 
       case 'SP_SUBMIT_TEXT': {
+        const submitCheck = validateSubmitText(message.payload);
+        if (!submitCheck.valid) {
+          sendResponse({ ok: false, error: submitCheck.error });
+          break;
+        }
         // Forward text to enhance endpoint
         try {
           const enhanceRes = await fetch(
@@ -188,7 +213,7 @@ async function handleMessage(
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                text: message.payload.text,
+                text: sanitizeString(message.payload.text),
                 metadata: message.payload.metadata || {},
               }),
             }
@@ -217,6 +242,11 @@ async function handleMessage(
       }
 
       case 'SP_CONFIRM_PROMPT': {
+        const confirmCheck = validateConfirmPrompt(message.payload);
+        if (!confirmCheck.valid) {
+          sendResponse({ ok: false, error: confirmCheck.error });
+          break;
+        }
         // Forward to MCP bridge
         try {
           const mcpRes = await fetch(`${MCP_BRIDGE_URL}/prompt`, {

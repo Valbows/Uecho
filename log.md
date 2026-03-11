@@ -135,3 +135,61 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-10] [BUG] [QUEUE] — enqueue silently overwrote duplicate prompt_id → added _queue.has() guard, throws Error on duplicate`
 - `[2026-03-10] [BUG] [QUEUE] — _evictTerminal only removed terminal entries, queue could exceed MAX_QUEUE_SIZE if all queued → added fallback to evict oldest queued entries`
 - `[2026-03-10] [INFO] [TEST] — Full suite after hardening: extension 111, backend 66, MCP bridge 34 = 211 total, 0 failures`
+- `[2026-03-10] [FIX] [EXT] — BACKEND_URL in service-worker.ts was 8080 → corrected to 8000 (uvicorn port)`
+- `[2026-03-10] [FIX] [EXT] — Created placeholder icon PNGs (16/48/128) and copied content-style.css to public/ for CRXJS build`
+
+### Phase 8: Verification, Guardrails & Security Hardening
+
+#### 8a — Verification Engine Hardening
+- `[2026-03-10] [SEC] [VERIFY] — Added 9 XSS/injection regex patterns (script tags, event handlers, javascript: URIs, iframes, data:text/html, expression(), etc.)`
+- `[2026-03-10] [SEC] [VERIFY] — Added MAX_PROMPT_TEXT_LENGTH=5000 and MAX_SELECTOR_LENGTH=200 limits`
+- `[2026-03-10] [SEC] [VERIFY] — Added MAX_SELECTOR_DEPTH=10 combinator limit to prevent overly complex selectors`
+
+#### 8b — Comprehensive Verification Tests
+- `[2026-03-10] [TEST] [VERIFY] — Added 12 new tests: XSS script/event/javascript/iframe, prompt length, selector length, selector depth, consistency warnings, drift edge cases, all blocked keywords, multiple schema errors`
+- `[2026-03-10] [INFO] [TEST] — Verification tests: 21 total (was 9), all passing`
+
+#### 8c — Backend Security
+- `[2026-03-10] [SEC] [API] — Added slowapi rate limiting: process-gesture 30/min, enhance-text 30/min, upload-screenshot 10/min, send-to-ide 20/min`
+- `[2026-03-10] [SEC] [API] — Tightened CORS allow_methods from wildcard to ["GET", "POST", "OPTIONS"]`
+- `[2026-03-10] [SEC] [API] — Added Pydantic field constraints: GestureEvent.type max_length=50, selector max_length=500, page_url max_length=2000, viewport ge=0/le=10000, TextEnhanceRequest.text max_length=5000`
+- `[2026-03-10] [SEC] [API] — Added ide_target field_validator: whitelist {windsurf, cursor, vscode, antigravity, generic}`
+- `[2026-03-10] [FIX] [API] — Updated send-to-ide response to use bridge "accepted" field (was "delivered") to match Phase 7 response contract`
+
+#### 8d — Extension Security
+- `[2026-03-10] [SEC] [EXT] — Created message-validator.ts with runtime message validation (compile-time types are not enough)`
+- `[2026-03-10] [SEC] [EXT] — validateMessage: checks type field exists, type is known, CS messages have tab context, sender matches extension ID`
+- `[2026-03-10] [SEC] [EXT] — validateSubmitText: non-empty text, max 5000 chars`
+- `[2026-03-10] [SEC] [EXT] — validateConfirmPrompt: required prompt fields, ide_target whitelist`
+- `[2026-03-10] [SEC] [EXT] — validateActivateAgent: overlay mode whitelist {grid, divbox, off}`
+- `[2026-03-10] [SEC] [EXT] — sanitizeString: strips control characters, trims, enforces max length`
+- `[2026-03-10] [SEC] [EXT] — Integrated validators into service-worker.ts handleMessage for SP_ACTIVATE_AGENT, SP_SUBMIT_TEXT, SP_CONFIRM_PROMPT`
+
+#### 8e — Integration Tests
+- `[2026-03-10] [TEST] [API] — Added 9 input validation integration tests: type/selector/url length limits, negative viewport, empty/long text, invalid ide_target, valid targets accepted, XSS in pipeline`
+- `[2026-03-10] [INFO] [TEST] — Full suite after Phase 8: extension 111, backend 87, MCP bridge 34 = 232 total, 0 failures`
+
+### GCP Services Activation
+- `[2026-03-10] [INFO] [GCP] — gcloud CLI authenticated as valery.rene@pursuit.org, project set to user-echo-ui-navigator`
+- `[2026-03-10] [INFO] [GCP] — ADC credentials configured with quota project user-echo-ui-navigator`
+- `[2026-03-10] [INFO] [GCP] — Billing enabled on project 11807439487`
+- `[2026-03-10] [INFO] [GCP] — 6 APIs enabled: aiplatform, firestore, storage, firebase, run, cloudbuild`
+- `[2026-03-10] [INFO] [GCP] — Firestore database created: Native mode, nam5 multi-region, free tier`
+- `[2026-03-10] [INFO] [GCP] — Cloud Storage bucket created: user-echo-ui-navigator-screenshots (us-central1, STANDARD, uniform IAM)`
+- `[2026-03-10] [INFO] [GCP] — Switched from Vertex AI to Google AI Studio for LLM/embedding access (API key auth)`
+- `[2026-03-10] [INFO] [GCP] — LLM model: gemini-3.1-flash-lite-preview (AI Studio) — verified working`
+- `[2026-03-10] [INFO] [GCP] — Embedding model: gemini-embedding-2-preview (AI Studio, multimodal: text+image+video+audio+PDF) — 3072-dim vectors`
+- `[2026-03-10] [INFO] [GCP] — .env created with GEMINI_API_KEY, GEMINI_MODEL, GEMINI_EMBEDDING_MODEL, bucket config`
+- `[2026-03-10] [DECISION] [GCP] — Vector store dimension changed: 1408 (multimodalembedding@001) → 3072 (gemini-embedding-2-preview). Update pending for Phase 9`
+- `[2026-03-10] [DECISION] [GCP] — SDK: google-genai with api_key param (not deprecated vertexai SDK)`
+
+### Verification Engine Fix
+- `[2026-03-10] [BUG] [VERIFY] — Non-greedy regex re.sub(r'\[.*?\]', '[]', selector) failed for attribute values with brackets inside quotes (e.g. [data="a]b"], [title='[icon]']) → replaced with iterative scanner tracking bracket depth and quote state (single/double), handles escaped characters`
+- `[2026-03-10] [INFO] [TEST] — Full suite after fix: extension 111, backend 87, MCP bridge 34 = 232 total, 0 failures`
+
+### Permission Rollout Strategy (Phase 9)
+- **Current:** localhost-only (`http://localhost/*`, `http://127.0.0.1/*`) — S.A.F.E. compliant for dev testing
+- **After Phase 8 guardrails pass:** Add explicit staging/production domains to `host_permissions` and `content_scripts.matches`
+- **Full support (optional):** Switch to `https://*/*` or use Chrome optional permissions API (`chrome.permissions.request`) for on-demand site access — avoids permission escalation prompts for existing users
+- **Files to update:** `extension/manifest.json` (host_permissions, content_scripts.matches), rebuild + redeploy
+- **Note:** Permission escalation after Chrome Web Store deployment triggers re-approval prompt for users

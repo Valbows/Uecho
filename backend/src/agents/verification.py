@@ -16,7 +16,7 @@ DRIFT_THRESHOLD = 0.80
 # Blocked selectors / patterns for safety
 BLOCKED_SELECTORS = frozenset([
     "html", "body", "head", "script", "style", "meta", "link",
-    "iframe", "object", "embed", "applet",
+    "iframe", "object", "embed", "applet", "*",
 ])
 
 # Blocked action keywords in prompt text
@@ -24,6 +24,24 @@ BLOCKED_KEYWORDS = frozenset([
     "delete", "drop", "truncate", "exec(", "eval(", "document.cookie",
     "__proto__", "constructor.prototype",
 ])
+
+# XSS / injection patterns in prompt text
+XSS_PATTERNS = [
+    re.compile(r'<\s*script', re.IGNORECASE),
+    re.compile(r'javascript\s*:', re.IGNORECASE),
+    re.compile(r'on\w+\s*=', re.IGNORECASE),  # onclick=, onerror=, etc.
+    re.compile(r'data\s*:\s*text/html', re.IGNORECASE),
+    re.compile(r'<\s*iframe', re.IGNORECASE),
+    re.compile(r'<\s*object', re.IGNORECASE),
+    re.compile(r'<\s*embed', re.IGNORECASE),
+    re.compile(r'expression\s*\(', re.IGNORECASE),
+    re.compile(r'url\s*\(\s*["\']?javascript', re.IGNORECASE),
+]
+
+# Limits
+MAX_PROMPT_TEXT_LENGTH = 5000
+MAX_SELECTOR_LENGTH = 200
+MAX_SELECTOR_DEPTH = 10  # max combinators in a selector
 
 
 def verify_prompt(prompt: PromptSchema, intent: str) -> VerificationResult:
@@ -92,24 +110,75 @@ def _check_safety(prompt: PromptSchema, errors: list[str]) -> bool:
     """Check for dangerous selectors or injection patterns."""
     safe = True
 
+    selector = prompt.selector.strip()
+
+    # Selector length limit
+    if len(selector) > MAX_SELECTOR_LENGTH:
+        errors.append(f"Selector exceeds max length ({MAX_SELECTOR_LENGTH})")
+        safe = False
+
+    # Selector depth limit (count combinators)
+    # Strip attribute selector contents using an iterative scanner that
+    # correctly handles brackets/quotes inside attribute values,
+    # e.g. [data="a]b"] or [title='[icon]'].
+    parts: list[str] = []
+    i = 0
+    while i < len(selector):
+        if selector[i] == '[':
+            # Walk past the entire [...] block, respecting quotes
+            quote_char = ''
+            i += 1
+            while i < len(selector):
+                ch = selector[i]
+                if quote_char:
+                    if ch == '\\' and i + 1 < len(selector):
+                        i += 2  # skip escaped char inside quotes
+                        continue
+                    if ch == quote_char:
+                        quote_char = ''
+                elif ch in ('"', "'"):
+                    quote_char = ch
+                elif ch == ']':
+                    i += 1
+                    break
+                i += 1
+            parts.append('[]')
+        else:
+            parts.append(selector[i])
+            i += 1
+    cleaned = ''.join(parts)
+    # Normalize whitespace runs to a single space
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    # Count explicit combinators (> + ~) and whitespace descendant combinators
+    combinator_count = len(re.findall(r'\s*[>+~]\s*|\s+', cleaned))
+    if combinator_count > MAX_SELECTOR_DEPTH:
+        errors.append(f"Selector depth {combinator_count} exceeds max ({MAX_SELECTOR_DEPTH})")
+        safe = False
+
     # Check selector against blocklist — tokenize on CSS delimiters
-    tokens = re.split(r'[\s>+~.,#:\[\]]+', prompt.selector.strip().lower())
+    tokens = re.split(r'[\s>+~.,#:\[\]]+', selector.lower())
     for token in tokens:
         if token and token in BLOCKED_SELECTORS:
             errors.append(f"Selector targets blocked element: {token}")
             safe = False
 
-    # Check prompt text for injection patterns
+    # Prompt text length limit
+    if len(prompt.prompt_text) > MAX_PROMPT_TEXT_LENGTH:
+        errors.append(f"Prompt text exceeds max length ({MAX_PROMPT_TEXT_LENGTH})")
+        safe = False
+
+    # Check prompt text for blocked keywords
     text_lower = prompt.prompt_text.lower()
     for keyword in BLOCKED_KEYWORDS:
         if keyword in text_lower:
             errors.append(f"Prompt text contains blocked keyword: {keyword}")
             safe = False
 
-    # Check for overly broad selectors
-    if prompt.selector.strip() == "*":
-        errors.append("Universal selector (*) is not allowed")
-        safe = False
+    # Check prompt text for XSS / injection patterns
+    for pattern in XSS_PATTERNS:
+        if pattern.search(prompt.prompt_text):
+            errors.append(f"Prompt text matches XSS pattern: {pattern.pattern}")
+            safe = False
 
     return safe
 

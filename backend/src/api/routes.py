@@ -9,11 +9,14 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
 from .models import (
@@ -38,11 +41,16 @@ load_dotenv()
 # ─── Initialize Vector Store with seed examples ─────────────────
 _vector_store = create_seeded_store()
 
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(
     title="U:Echo Backend",
     version="0.1.0",
     description="Agent pipeline backend for the U:Echo Chrome extension",
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -52,7 +60,7 @@ app.add_middleware(
         "http://127.0.0.1:*",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -70,7 +78,8 @@ async def health():
 
 # ─── Process Gesture ─────────────────────────────────────────────
 @app.post("/api/process-gesture", response_model=AgentResponse)
-async def process_gesture(payload: MetadataPayload):
+@limiter.limit("30/minute")
+async def process_gesture(request: Request, payload: MetadataPayload):
     """
     Main agent pipeline entry point.
     1. Action Recorder → interpret gesture
@@ -115,12 +124,13 @@ async def process_gesture(payload: MetadataPayload):
 
 # ─── Enhance Text ────────────────────────────────────────────────
 @app.post("/api/enhance-text")
-async def enhance_text(request: TextEnhanceRequest):
+@limiter.limit("30/minute")
+async def enhance_text(request: Request, body: TextEnhanceRequest):
     """Use LLM to enhance user's natural language description."""
     try:
         # TODO: Phase 5 — use Gemini to enhance text
         return {
-            "enhanced_text": request.text,
+            "enhanced_text": body.text,
             "suggestions": [],
         }
     except Exception as e:
@@ -130,7 +140,8 @@ async def enhance_text(request: TextEnhanceRequest):
 
 # ─── Upload Screenshot ───────────────────────────────────────────
 @app.post("/api/upload-screenshot")
-async def upload_screenshot(file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+async def upload_screenshot(request: Request, file: UploadFile = File(...)):
     """Upload a screenshot to Cloud Storage."""
     try:
         # TODO: Phase 5 — upload to GCS
@@ -148,23 +159,24 @@ async def upload_screenshot(file: UploadFile = File(...)):
 MCP_BRIDGE_URL = os.getenv("MCP_BRIDGE_URL", "http://localhost:3939")
 
 @app.post("/api/send-to-ide")
-async def send_to_ide(request: SendToIdeRequest):
+@limiter.limit("20/minute")
+async def send_to_ide(request: Request, body: SendToIdeRequest):
     """Forward confirmed prompt to MCP bridge."""
     try:
         payload = {
-            "prompt_text": request.prompt.prompt_text,
-            "feature_name": request.prompt.feature_name,
-            "selector": request.prompt.selector,
-            "action_type": request.prompt.action_type,
-            "ide_target": request.ide_target,
-            "metadata": request.prompt.metadata if hasattr(request.prompt, "metadata") else None,
+            "prompt_text": body.prompt.prompt_text,
+            "feature_name": body.prompt.feature_name,
+            "selector": body.prompt.selector,
+            "action_type": body.prompt.action_type,
+            "ide_target": body.ide_target,
+            "metadata": body.prompt.metadata if hasattr(body.prompt, "metadata") else None,
         }
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(f"{MCP_BRIDGE_URL}/prompt", json=payload)
             resp.raise_for_status()
             bridge_result = resp.json()
         return {
-            "sent": bridge_result.get("delivered", False),
+            "sent": bridge_result.get("accepted", False),
             "prompt_id": bridge_result.get("prompt_id"),
             "ide_target": bridge_result.get("ide_target"),
             "format": bridge_result.get("format"),

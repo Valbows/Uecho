@@ -304,3 +304,150 @@ class TestResponseLatency:
         client.post("/api/process-gesture", json=payload)
         elapsed_ms = (time.monotonic() - start) * 1000
         assert elapsed_ms < 500, f"Gesture processing took {elapsed_ms:.1f}ms"
+
+
+# ─── Input Validation Tests ──────────────────────────────────────
+class TestInputValidation:
+    """Tests Pydantic field constraints and input sanitization."""
+
+    def test_gesture_type_too_long_rejected(self):
+        payload = {
+            "gesture": {
+                "type": "x" * 51,
+                "selector": ".btn",
+                "before_bbox": {"x": 0, "y": 0, "width": 100, "height": 50},
+                "after_bbox": {"x": 0, "y": 0, "width": 100, "height": 50},
+                "delta": {},
+                "timestamp": 1709000000000,
+            },
+            "tab_id": 1,
+            "page_url": "http://localhost:3000",
+        }
+        response = client.post("/api/process-gesture", json=payload)
+        assert response.status_code == 422
+
+    def test_gesture_selector_too_long_rejected(self):
+        payload = {
+            "gesture": {
+                "type": "resize",
+                "selector": "." + "a" * 500,
+                "before_bbox": {"x": 0, "y": 0, "width": 100, "height": 50},
+                "after_bbox": {"x": 0, "y": 0, "width": 100, "height": 50},
+                "delta": {},
+                "timestamp": 1709000000000,
+            },
+            "tab_id": 1,
+            "page_url": "http://localhost:3000",
+        }
+        response = client.post("/api/process-gesture", json=payload)
+        assert response.status_code == 422
+
+    def test_page_url_too_long_rejected(self):
+        payload = {
+            "gesture": {
+                "type": "resize",
+                "selector": ".btn",
+                "before_bbox": {"x": 0, "y": 0, "width": 100, "height": 50},
+                "after_bbox": {"x": 0, "y": 0, "width": 100, "height": 50},
+                "delta": {},
+                "timestamp": 1709000000000,
+            },
+            "tab_id": 1,
+            "page_url": "http://localhost:3000/" + "x" * 2000,
+        }
+        response = client.post("/api/process-gesture", json=payload)
+        assert response.status_code == 422
+
+    def test_viewport_negative_rejected(self):
+        payload = {
+            "gesture": {
+                "type": "resize",
+                "selector": ".btn",
+                "before_bbox": {"x": 0, "y": 0, "width": 100, "height": 50},
+                "after_bbox": {"x": 0, "y": 0, "width": 100, "height": 50},
+                "delta": {},
+                "timestamp": 1709000000000,
+            },
+            "tab_id": 1,
+            "page_url": "http://localhost:3000",
+            "viewport_width": -1,
+        }
+        response = client.post("/api/process-gesture", json=payload)
+        assert response.status_code == 422
+
+    def test_enhance_text_empty_rejected(self):
+        response = client.post("/api/enhance-text", json={"text": ""})
+        assert response.status_code == 422
+
+    def test_enhance_text_too_long_rejected(self):
+        response = client.post("/api/enhance-text", json={"text": "x" * 5001})
+        assert response.status_code == 422
+
+    def test_send_to_ide_invalid_ide_target_rejected(self):
+        payload = {
+            "prompt": {
+                "feature_name": "Test",
+                "selector": ".btn",
+                "action_type": "resize",
+                "current_dimensions": {"x": 0, "y": 0, "width": 100, "height": 40},
+                "target_dimensions": {"x": 0, "y": 0, "width": 120, "height": 40},
+                "visual_change_description": "test",
+                "prompt_text": "test prompt",
+            },
+            "ide_target": "notepad",
+        }
+        response = client.post("/api/send-to-ide", json=payload)
+        assert response.status_code == 422
+
+    def test_send_to_ide_valid_targets_accepted(self):
+        """All allowed ide_target values should be accepted (mocking bridge)."""
+        for target in ["windsurf", "cursor", "vscode", "antigravity", "generic"]:
+            payload = {
+                "prompt": {
+                    "feature_name": "Test",
+                    "selector": ".btn",
+                    "action_type": "resize",
+                    "current_dimensions": {"x": 0, "y": 0, "width": 100, "height": 40},
+                    "target_dimensions": {"x": 0, "y": 0, "width": 120, "height": 40},
+                    "visual_change_description": "test",
+                    "prompt_text": "test prompt",
+                },
+                "ide_target": target,
+            }
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json.return_value = {
+                "accepted": True, "prompt_id": "t-001",
+                "ide_target": target, "format": "markdown",
+            }
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                response = client.post("/api/send-to-ide", json=payload)
+            assert response.status_code == 200, f"Failed for ide_target={target}"
+
+    def test_verification_blocks_xss_in_pipeline(self):
+        """XSS in gesture selector should trigger safety failure in verification."""
+        payload = {
+            "gesture": {
+                "type": "text",
+                "selector": '<script>alert(1)</script>',
+                "before_bbox": {"x": 0, "y": 0, "width": 100, "height": 50},
+                "after_bbox": {"x": 0, "y": 0, "width": 100, "height": 50},
+                "delta": {},
+                "timestamp": 1709000000000,
+            },
+            "tab_id": 1,
+            "page_url": "http://localhost:3000",
+        }
+        response = client.post("/api/process-gesture", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        verification = data["verification"]
+        assert verification is not None
+        assert verification["safety_passed"] is False
+        assert data["status"] == "error"
+        assert any("XSS" in e or "blocked" in e.lower() for e in verification["errors"])

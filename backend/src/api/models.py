@@ -3,7 +3,7 @@ U:Echo — Pydantic Request / Response Models
 Shared across routes, agents, embedding, and storage modules.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ─── Core Models ───────────────────────────────────────────────────
@@ -24,8 +24,8 @@ class GestureDelta(BaseModel):
 
 
 class GestureEvent(BaseModel):
-    type: str
-    selector: str
+    type: str = Field(..., min_length=1, max_length=50)
+    selector: str = Field(..., min_length=1, max_length=500)
     before_bbox: BoundingBox
     after_bbox: BoundingBox
     delta: GestureDelta
@@ -35,14 +35,14 @@ class GestureEvent(BaseModel):
 
 class MetadataPayload(BaseModel):
     gesture: GestureEvent
-    screenshot_url: str = ""
+    screenshot_url: str = Field(default="", max_length=500_000)
     tab_id: int
-    page_url: str
+    page_url: str = Field(..., max_length=2000)
     scroll_x: float = 0
     scroll_y: float = 0
-    viewport_width: float = 0
-    viewport_height: float = 0
-    extension_session_id: str = ""
+    viewport_width: float = Field(default=0, ge=0, le=10000)
+    viewport_height: float = Field(default=0, ge=0, le=10000)
+    extension_session_id: str = Field(default="", max_length=200)
 
 
 # ─── Prompt / Verification ────────────────────────────────────────
@@ -87,10 +87,18 @@ class AgentResponse(BaseModel):
 
 # ─── Endpoint-specific Models ─────────────────────────────────────
 class TextEnhanceRequest(BaseModel):
-    text: str
+    text: str = Field(..., min_length=1, max_length=5000)
     metadata: dict | None = None
 
 
 class SendToIdeRequest(BaseModel):
     prompt: PromptSchema
-    ide_target: str = "windsurf"
+    ide_target: str = Field(default="windsurf", min_length=1, max_length=50)
+
+    @field_validator("ide_target")
+    @classmethod
+    def validate_ide_target(cls, v: str) -> str:
+        allowed = {"windsurf", "cursor", "vscode", "antigravity", "generic"}
+        if v not in allowed:
+            raise ValueError(f"ide_target must be one of {allowed}")
+        return v

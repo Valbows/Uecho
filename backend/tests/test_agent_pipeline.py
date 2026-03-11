@@ -253,6 +253,169 @@ class TestVerificationEngine:
             result = verify_prompt(prompt, "test")
             assert result.safety_passed is False, f"Selector '{sel}' should be blocked"
 
+    def test_xss_script_tag_fails_safety(self):
+        prompt = PromptSchema(
+            feature_name="XSS",
+            selector=".btn",
+            action_type="text",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            visual_change_description="test",
+            prompt_text='Change text to <script>alert("xss")</script>',
+        )
+        result = verify_prompt(prompt, "test")
+        assert result.safety_passed is False
+
+    def test_xss_event_handler_fails_safety(self):
+        prompt = PromptSchema(
+            feature_name="XSS",
+            selector=".img",
+            action_type="text",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            visual_change_description="test",
+            prompt_text='Add onerror= handler to image',
+        )
+        result = verify_prompt(prompt, "test")
+        assert result.safety_passed is False
+
+    def test_xss_javascript_uri_fails_safety(self):
+        prompt = PromptSchema(
+            feature_name="XSS",
+            selector=".link",
+            action_type="text",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            visual_change_description="test",
+            prompt_text='Set href to javascript: void(0)',
+        )
+        result = verify_prompt(prompt, "test")
+        assert result.safety_passed is False
+
+    def test_xss_iframe_fails_safety(self):
+        prompt = PromptSchema(
+            feature_name="XSS",
+            selector=".container",
+            action_type="text",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            visual_change_description="test",
+            prompt_text='Inject <iframe src="evil.com"></iframe>',
+        )
+        result = verify_prompt(prompt, "test")
+        assert result.safety_passed is False
+
+    def test_prompt_text_exceeds_max_length(self):
+        prompt = PromptSchema(
+            feature_name="Long",
+            selector=".btn",
+            action_type="resize",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=120, height=40),
+            visual_change_description="test",
+            prompt_text="x" * 5001,
+        )
+        result = verify_prompt(prompt, "test")
+        assert result.safety_passed is False
+        assert any("max length" in e.lower() for e in result.errors)
+
+    def test_selector_exceeds_max_length(self):
+        prompt = PromptSchema(
+            feature_name="Deep",
+            selector="." + "a" * 201,
+            action_type="resize",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=120, height=40),
+            visual_change_description="test",
+            prompt_text="test prompt",
+        )
+        result = verify_prompt(prompt, "test")
+        assert result.safety_passed is False
+
+    def test_selector_depth_exceeds_limit(self):
+        deep_selector = " > ".join([f".level{i}" for i in range(12)])
+        prompt = PromptSchema(
+            feature_name="Deep",
+            selector=deep_selector,
+            action_type="resize",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=120, height=40),
+            visual_change_description="test",
+            prompt_text="test prompt",
+        )
+        result = verify_prompt(prompt, "test")
+        assert result.safety_passed is False
+
+    def test_consistency_warns_resize_same_dims(self):
+        prompt = PromptSchema(
+            feature_name="No Change",
+            selector=".btn",
+            action_type="resize",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            visual_change_description="resize test",
+            prompt_text="resize the .btn element",
+        )
+        result = verify_prompt(prompt, "resize the .btn element")
+        assert result.consistency_passed is False
+        assert any("dimensions" in w.lower() for w in result.warnings)
+
+    def test_consistency_warns_action_missing_from_text(self):
+        prompt = PromptSchema(
+            feature_name="Mismatch",
+            selector=".btn",
+            action_type="color",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=120, height=40),
+            visual_change_description="test",
+            prompt_text="make the button bigger",
+        )
+        result = verify_prompt(prompt, "test")
+        assert any("action_type" in w for w in result.warnings)
+
+    def test_drift_score_zero_for_empty_intent(self):
+        prompt = PromptSchema(
+            feature_name="Test",
+            selector=".btn",
+            action_type="resize",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=120, height=40),
+            visual_change_description="test",
+            prompt_text="test prompt",
+        )
+        result = verify_prompt(prompt, "")
+        assert result.semantic_drift_score == 0.0
+        assert result.drift_warning is True
+
+    def test_all_blocked_keywords_rejected(self):
+        from src.agents.verification import BLOCKED_KEYWORDS
+        for keyword in BLOCKED_KEYWORDS:
+            prompt = PromptSchema(
+                feature_name="Test",
+                selector=".safe",
+                action_type="text",
+                current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+                target_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+                visual_change_description="test",
+                prompt_text=f"Do something with {keyword} here",
+            )
+            result = verify_prompt(prompt, "test")
+            assert result.safety_passed is False, f"Keyword '{keyword}' should be blocked"
+
+    def test_multiple_schema_errors_reported(self):
+        prompt = PromptSchema(
+            feature_name="",
+            selector="",
+            action_type="",
+            current_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            target_dimensions=BoundingBox(x=0, y=0, width=100, height=40),
+            visual_change_description="",
+            prompt_text="",
+        )
+        result = verify_prompt(prompt, "test")
+        assert result.schema_valid is False
+        assert len(result.errors) >= 5
+
 
 # ─── Embedding Service ───────────────────────────────────────────
 class TestEmbeddingService:
