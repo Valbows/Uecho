@@ -430,7 +430,7 @@ async def export_csv(session_id: str | None = None, _user=Depends(verify_token))
         for req in requests:
             writer.writerow(req)
 
-        return {"csv": output.getvalue(), "count": total}
+        return {"csv": output.getvalue(), "count": len(requests), "total": total}
     except Exception as e:
         logger.exception("export_csv failed")
         raise HTTPException(status_code=500, detail="Internal server error")

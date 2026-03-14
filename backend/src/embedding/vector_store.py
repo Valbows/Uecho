@@ -89,7 +89,7 @@ class VectorStore:
         dists = results["distances"][0] if results["distances"] else []
 
         for i, eid in enumerate(ids):
-            similarity = 1.0 - dists[i]  # cosine distance → cosine similarity
+            similarity = (1.0 - dists[i]) if i < len(dists) else 0.0  # cosine distance → cosine similarity
             entry = VectorEntry(
                 id=eid,
                 text=docs[i] if i < len(docs) else "",

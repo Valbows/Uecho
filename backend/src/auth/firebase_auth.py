@@ -6,8 +6,10 @@ Falls back to no-auth mode when firebase-admin is not configured (tests, local d
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import threading
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request
@@ -17,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 _firebase_app = None
 _auth_disabled = False
+_firebase_init_lock = threading.Lock()
 
 security = HTTPBearer(auto_error=False)
 
@@ -32,32 +35,39 @@ def _init_firebase() -> bool:
         return True
     if _auth_disabled:
         return False
-    if not _auth_required():
-        _auth_disabled = True
-        return False
 
-    try:
-        import firebase_admin
-        from firebase_admin import credentials
+    with _firebase_init_lock:
+        # Re-check after acquiring lock
+        if _firebase_app is not None:
+            return True
+        if _auth_disabled:
+            return False
+        if not _auth_required():
+            _auth_disabled = True
+            return False
 
-        # Use ADC or explicit service account
-        sa_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        if sa_path and os.path.exists(sa_path):
-            cred = credentials.Certificate(sa_path)
-        else:
-            cred = credentials.ApplicationDefault()
+        try:
+            import firebase_admin
+            from firebase_admin import credentials
 
-        _firebase_app = firebase_admin.initialize_app(cred, {
-            "projectId": os.getenv("GOOGLE_CLOUD_PROJECT", "user-echo-ui-navigator"),
-        })
-        logger.info("Firebase Admin SDK initialized")
-        return True
-    except Exception as e:
-        if _auth_required():
-            raise RuntimeError(f"Firebase Auth is required but initialization failed: {e}") from e
-        logger.warning("Firebase Auth unavailable: %s — auth disabled", e)
-        _auth_disabled = True
-        return False
+            # Use ADC or explicit service account
+            sa_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            if sa_path and os.path.exists(sa_path):
+                cred = credentials.Certificate(sa_path)
+            else:
+                cred = credentials.ApplicationDefault()
+
+            _firebase_app = firebase_admin.initialize_app(cred, {
+                "projectId": os.getenv("GOOGLE_CLOUD_PROJECT", "user-echo-ui-navigator"),
+            })
+            logger.info("Firebase Admin SDK initialized")
+            return True
+        except Exception as e:
+            if _auth_required():
+                raise RuntimeError(f"Firebase Auth is required but initialization failed: {e}") from e
+            logger.warning("Firebase Auth unavailable: %s — auth disabled", e)
+            _auth_disabled = True
+            return False
 
 
 async def verify_token(
@@ -78,7 +88,7 @@ async def verify_token(
 
     try:
         from firebase_admin import auth
-        decoded = auth.verify_id_token(credentials.credentials)
+        decoded = await asyncio.to_thread(auth.verify_id_token, credentials.credentials)
         return decoded
     except auth.ExpiredIdTokenError:
         raise HTTPException(status_code=401, detail="Expired Firebase ID token")

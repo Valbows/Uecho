@@ -7,6 +7,7 @@ Falls back to in-memory dicts when Firestore is unavailable (tests, offline dev)
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -18,9 +19,10 @@ logger = logging.getLogger(__name__)
 
 _db = None
 _fallback_mode = False
+_db_init_lock = asyncio.Lock()
 
 
-def _get_db():
+async def _get_db():
     """Lazy-init Firestore client. Returns None if unavailable."""
     global _db, _fallback_mode
     if _db is not None:
@@ -28,17 +30,24 @@ def _get_db():
     if _fallback_mode:
         return None
 
-    try:
-        from google.cloud import firestore
-        _db = firestore.AsyncClient(
-            project=os.getenv("GOOGLE_CLOUD_PROJECT", "user-echo-ui-navigator"),
-        )
-        logger.info("Firestore client initialized (project=%s)", _db.project)
-        return _db
-    except Exception as e:
-        logger.warning("Firestore unavailable, using in-memory fallback: %s", e)
-        _fallback_mode = True
-        return None
+    async with _db_init_lock:
+        # Re-check after acquiring lock
+        if _db is not None:
+            return _db
+        if _fallback_mode:
+            return None
+
+        try:
+            from google.cloud import firestore
+            _db = firestore.AsyncClient(
+                project=os.getenv("GOOGLE_CLOUD_PROJECT", "user-echo-ui-navigator"),
+            )
+            logger.info("Firestore client initialized (project=%s)", _db.project)
+            return _db
+        except Exception as e:
+            logger.warning("Firestore unavailable, using in-memory fallback: %s", e)
+            _fallback_mode = True
+            return None
 
 
 # ─── In-memory fallback stores ───────────────────────────────────
@@ -63,7 +72,7 @@ async def create_session(session_id: str, data: dict[str, Any]) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    db = _get_db()
+    db = await _get_db()
     if db:
         await db.collection(SESSIONS_COLLECTION).document(session_id).set(doc, merge=True)
     else:
@@ -73,7 +82,7 @@ async def create_session(session_id: str, data: dict[str, Any]) -> dict:
 
 async def get_session(session_id: str) -> dict | None:
     """Retrieve a session by ID."""
-    db = _get_db()
+    db = await _get_db()
     if db:
         snap = await db.collection(SESSIONS_COLLECTION).document(session_id).get()
         return snap.to_dict() if snap.exists else None
@@ -83,14 +92,14 @@ async def get_session(session_id: str) -> dict | None:
 async def update_session(session_id: str, updates: dict[str, Any]) -> None:
     """Merge updates into an existing session."""
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-    db = _get_db()
+    db = await _get_db()
     if db:
         await db.collection(SESSIONS_COLLECTION).document(session_id).set(updates, merge=True)
     else:
         if session_id in _mem_sessions:
             _mem_sessions[session_id].update(updates)
         else:
-            _mem_sessions[session_id] = {"session_id": session_id, "created_at": updates["updated_at"], **updates}
+            _mem_sessions[session_id] = {"session_id": session_id, "created_at": datetime.now(timezone.utc).isoformat(), **updates}
 
 
 # ─── Request / Prompt History ────────────────────────────────────
@@ -102,7 +111,7 @@ async def save_request(request_id: str, data: dict[str, Any]) -> dict:
         "request_id": request_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    db = _get_db()
+    db = await _get_db()
     if db:
         await db.collection(REQUESTS_COLLECTION).document(request_id).set(doc)
     else:
@@ -112,7 +121,7 @@ async def save_request(request_id: str, data: dict[str, Any]) -> dict:
 
 async def get_request(request_id: str) -> dict | None:
     """Retrieve a single request by ID."""
-    db = _get_db()
+    db = await _get_db()
     if db:
         snap = await db.collection(REQUESTS_COLLECTION).document(request_id).get()
         return snap.to_dict() if snap.exists else None
@@ -124,7 +133,7 @@ async def list_requests(
     limit: int = 100,
 ) -> list[dict]:
     """List request history, optionally filtered by session."""
-    db = _get_db()
+    db = await _get_db()
     if db:
         query = db.collection(REQUESTS_COLLECTION).order_by(
             "created_at", direction="DESCENDING"
@@ -146,7 +155,7 @@ async def list_requests(
 
 async def count_requests(session_id: str | None = None) -> int:
     """Count requests, optionally filtered by session."""
-    db = _get_db()
+    db = await _get_db()
     if db:
         query = db.collection(REQUESTS_COLLECTION)
         if session_id:

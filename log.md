@@ -285,7 +285,6 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-14] [FEAT] [AUTH] — firebase_auth.py: Firebase Admin SDK token verification middleware`
 - `[2026-03-14] [FEAT] [AUTH] — Graceful fallback: auth disabled when Firebase Admin not configured (local dev/tests)`
 - `[2026-03-14] [FEAT] [AUTH] — verify_token dependency on protected routes: process-gesture, enhance-text, upload-screenshot, send-to-ide`
-- `[2026-03-14] [FEAT] [EXT] — Added identity permission and oauth2 config placeholder to manifest.json`
 
 #### 9f — Docker & Cloud Run
 - `[2026-03-14] [FEAT] [DOCKER] — Backend Dockerfile: Python 3.14-slim, non-root user, health check, ChromaDB volume`
@@ -298,8 +297,9 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-14] [FEAT] [CI] — Deploy job: Workload Identity Federation auth, GCR push, Cloud Run deploy (main branch only)`
 
 #### 9h — Permission Rollout & Chrome Web Store Prep
-- `[2026-03-14] [FEAT] [EXT] — Added identity permission for Google Sign-In via chrome.identity API`
-- `[2026-03-14] [FEAT] [EXT] — Added oauth2 config with scopes (openid, email, profile) and CWS key placeholder`
+- `[2026-03-14] [FEAT] [EXT] — Added identity permission + oauth2 config placeholder to manifest.json for future Google Sign-In`
+- `[2026-03-14] [REVERT] [EXT] — Removed oauth2/key placeholders (caused extension startup failure in Playwright E2E)`
+- `[2026-03-14] [REVERT] [EXT] — Removed identity permission (no chrome.identity calls in codebase; deferred to future auth implementation)`
 
 #### Phase 9 Summary
 - `[2026-03-14] [INFO] [TEST] — Full suite after Phase 9: backend 87/87, all green in 0.77s`
@@ -317,5 +317,16 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-14] [FIX] [AUTH] — Firebase init failure now raises RuntimeError when FIREBASE_AUTH_REQUIRED is set, instead of silently disabling auth`
 - `[2026-03-14] [FIX] [EMBED] — Added try/except in _gemini_embed with hash fallback on network/rate-limit/empty-response errors`
 - `[2026-03-14] [FIX] [DEPLOY] — Removed redundant images: section from cloudbuild.yaml (explicit push steps already handle pre-deploy push)`
-- `[2026-03-14] [FIX] [EXT] — Removed unused "identity" permission from manifest.json (no chrome.identity calls in codebase)`
 - `[2026-03-14] [INFO] [TEST] — Full suite after hardening: backend 87/87, extension 111/111, MCP bridge 38/38, Playwright E2E 33/33 (3 skipped)`
+
+### Security Hardening Round 2 (Concurrency, Robustness, Docker)
+- `[2026-03-14] [FIX] [FIRESTORE] — Fixed update_session in-memory created_at: use independent datetime.now() instead of reusing updated_at`
+- `[2026-03-14] [FEAT] [FIRESTORE] — Added firestore.indexes.json with composite index (session_id ASC + created_at DESC) for list_requests query`
+- `[2026-03-14] [FIX] [FIRESTORE] — Made _get_db async with asyncio.Lock double-checked locking to prevent concurrent Firestore client creation`
+- `[2026-03-14] [FIX] [ROUTES] — CSV export now returns count (actual rows) + total (full count) to indicate truncation`
+- `[2026-03-14] [FIX] [AUTH] — Wrapped auth.verify_id_token in asyncio.to_thread to avoid blocking the event loop`
+- `[2026-03-14] [FIX] [AUTH] — Added threading.Lock to _init_firebase with double-checked locking to prevent duplicate initialize_app`
+- `[2026-03-14] [FIX] [DOCKER] — MCP bridge Dockerfile: removed lockfile wildcard, added USER node for non-root runtime`
+- `[2026-03-14] [FIX] [EMBED] — Added defensive bounds check on dists[i] in vector store search loop`
+- `[2026-03-14] [FIX] [LOG] — Consolidated fragmented identity/oauth2 entries in log.md into clear lifecycle (add → revert)`
+- `[2026-03-14] [INFO] [TEST] — Full suite after round 2: backend 87/87, extension 111/111, MCP bridge 38/38, Playwright E2E 33/33 (3 skipped)`
