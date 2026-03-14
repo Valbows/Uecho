@@ -2,10 +2,34 @@
 U:Echo — Pytest Configuration & Fixtures
 """
 
+import os
 import pytest
 from fastapi.testclient import TestClient
 
 from src.api.routes import app
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_external_services():
+    """Prevent tests from hitting real Gemini API and Firestore."""
+    # Disable Gemini embeddings — use hash fallback
+    old_key = os.environ.pop("GEMINI_API_KEY", None)
+    from src.embedding import embedder
+    embedder._genai_client = None
+
+    # Force Firestore into in-memory fallback
+    from src.storage import firestore_client
+    firestore_client.reset_for_tests()
+
+    # Disable Firebase Auth — allow unauthenticated test requests
+    from src.auth import firebase_auth
+    firebase_auth.disable_auth_for_tests()
+
+    yield
+
+    if old_key is not None:
+        os.environ["GEMINI_API_KEY"] = old_key
+        embedder._genai_client = None
 
 
 @pytest.fixture

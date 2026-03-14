@@ -65,15 +65,23 @@ SEED_EXAMPLES: list[dict[str, str]] = [
 ]
 
 
-def create_seeded_store() -> VectorStore:
-    """Create a VectorStore pre-loaded with seed examples."""
-    store = VectorStore()
-    for example in SEED_EXAMPLES:
-        vector = embed_text(example["text"])
-        store.add(
-            entry_id=example["id"],
-            text=example["text"],
-            vector=vector,
-            metadata={"category": example["category"]},
-        )
+async def create_seeded_store(ephemeral: bool = False) -> VectorStore:
+    """Create a VectorStore pre-loaded with seed examples.
+    
+    Args:
+        ephemeral: If True, use in-memory ChromaDB (tests). Otherwise, persist to disk.
+    """
+    store = VectorStore(collection_name="uecho_examples", ephemeral=ephemeral)
+
+    # Only seed if the collection is empty (avoids re-embedding on restart)
+    if store.size == 0:
+        for example in SEED_EXAMPLES:
+            vector = await embed_text(example["text"])
+            store.add(
+                entry_id=example["id"],
+                text=example["text"],
+                vector=vector,
+                metadata={"category": example["category"]},
+            )
+
     return store

@@ -35,6 +35,9 @@ firebase-debug.log
 # Docker
 *.log
 
+# ChromaDB persistent data
+backend/data/chroma/
+
 # Testing
 coverage/
 .pytest_cache/

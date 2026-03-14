@@ -6,6 +6,7 @@ REST API endpoints for the agent pipeline.
 import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import httpx
@@ -16,7 +17,7 @@ from slowapi.util import get_remote_address
 logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -36,18 +37,31 @@ from ..agents.prompt_builder import build_prompt
 from ..agents.verification import verify_prompt
 from ..embedding.embedder import embed_gesture
 from ..storage.example_store import create_seeded_store
+from ..embedding.vector_store import VectorStore
+from ..storage.firestore_client import save_request, list_requests, count_requests
+from ..auth.firebase_auth import verify_token
 
 load_dotenv()
 
-# ─── Initialize Vector Store with seed examples ─────────────────
-_vector_store = create_seeded_store()
+# ─── Vector Store (initialized async at startup) ────────────────
+_vector_store: VectorStore | None = None
 
 limiter = Limiter(key_func=get_remote_address)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    global _vector_store
+    _vector_store = await create_seeded_store()
+    logger.info("Vector store initialized with %d seed examples", _vector_store.size)
+    yield
+
 
 app = FastAPI(
     title="U:Echo Backend",
     version="0.1.0",
     description="Agent pipeline backend for the U:Echo Chrome extension",
+    lifespan=lifespan,
 )
 
 app.state.limiter = limiter
@@ -80,7 +94,7 @@ async def health():
 # ─── Process Gesture ─────────────────────────────────────────────
 @app.post("/api/process-gesture", response_model=AgentResponse)
 @limiter.limit("30/minute")
-async def process_gesture(request: Request, payload: MetadataPayload):
+async def process_gesture(request: Request, payload: MetadataPayload, _user=Depends(verify_token)):
     """
     Main agent pipeline entry point.
     1. Action Recorder → interpret gesture
@@ -94,9 +108,11 @@ async def process_gesture(request: Request, payload: MetadataPayload):
         intent = interpret_intent(payload)
 
         # 2. Embed gesture for similarity search
-        gesture_vector = embed_gesture(payload)
+        gesture_vector = await embed_gesture(payload)
 
         # 3. Retrieve similar examples from vector store
+        if _vector_store is None:
+            raise RuntimeError("Vector store not initialized")
         results = _vector_store.search(gesture_vector)
         retrieved_examples = [entry.text for entry, _score in results]
 
@@ -112,12 +128,31 @@ async def process_gesture(request: Request, payload: MetadataPayload):
         elif verification.drift_warning:
             status = "needs_review"
 
-        return AgentResponse(
+        response = AgentResponse(
             interpreted_intent=intent,
             prompt=prompt,
             verification=verification,
             status=status,
         )
+
+        # 6. Persist to Firestore (fire-and-forget, don't block response)
+        try:
+            await save_request(
+                request_id=str(uuid.uuid4()),
+                data={
+                    "session_id": payload.extension_session_id or "",
+                    "page_url": payload.page_url,
+                    "gesture_type": payload.gesture.type,
+                    "selector": payload.gesture.selector,
+                    "intent": intent,
+                    "status": status,
+                    "prompt_text": prompt.prompt_text if prompt else "",
+                },
+            )
+        except Exception:
+            logger.warning("Failed to persist request to Firestore", exc_info=True)
+
+        return response
     except Exception as e:
         logger.exception("process_gesture failed")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -126,20 +161,19 @@ async def process_gesture(request: Request, payload: MetadataPayload):
 # ─── Enhance Text ────────────────────────────────────────────────
 @app.post("/api/enhance-text")
 @limiter.limit("30/minute")
-async def enhance_text(request: Request, body: TextEnhanceRequest):
+async def enhance_text(request: Request, body: TextEnhanceRequest, _user=Depends(verify_token)):
     """Use LLM to enhance user's natural language description."""
     try:
-        import google.generativeai as genai
-        
+        from google import genai as _genai
+
         api_key = os.getenv('GEMINI_API_KEY')
         model_name = os.getenv('GEMINI_MODEL', 'gemini-3.1-flash-lite-preview')
-        
+
         if not api_key:
             raise ValueError("GEMINI_API_KEY not configured")
-        
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
-        
+
+        client = _genai.Client(api_key=api_key)
+
         prompt = f"""You are a UI/UX design assistant. The user has described a UI change they want to make:
 
 "{body.text}"
@@ -150,8 +184,10 @@ Your task:
 3. Suggest any accessibility or usability improvements
 
 Respond with a concise, enhanced version of their request (2-3 sentences max) that a developer could act on immediately."""
-        
-        response = await model.generate_content_async(prompt)
+
+        response = await client.aio.models.generate_content(
+            model=model_name, contents=prompt
+        )
         enhanced = response.text.strip() if response.text else body.text
         
         return {
@@ -182,7 +218,7 @@ async def generate_prompt(request: Request, body: GeneratePromptRequest):
     Uses Gemini LLM to interpret the user's intent and build an actionable prompt.
     """
     try:
-        import google.generativeai as genai
+        from google import genai as _genai
         import json as _json
 
         api_key = os.getenv("GEMINI_API_KEY")
@@ -191,8 +227,7 @@ async def generate_prompt(request: Request, body: GeneratePromptRequest):
         if not api_key:
             raise ValueError("GEMINI_API_KEY not configured")
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
+        client = _genai.Client(api_key=api_key)
 
         llm_prompt = f"""You are a UI/UX engineering assistant. Given a user's natural language description of a UI change, generate a structured JSON prompt that a developer can act on.
 
@@ -209,7 +244,9 @@ Respond ONLY with valid JSON (no markdown, no explanation) matching this schema:
   "prompt_text": "A clear, developer-ready instruction paragraph describing exactly what to change and how"
 }}"""
 
-        response = await model.generate_content_async(llm_prompt)
+        response = await client.aio.models.generate_content(
+            model=model_name, contents=llm_prompt
+        )
         raw = response.text.strip() if response.text else ""
 
         # Parse LLM JSON response
@@ -278,17 +315,57 @@ Respond ONLY with valid JSON (no markdown, no explanation) matching this schema:
 
 
 # ─── Upload Screenshot ───────────────────────────────────────────
+GCS_BUCKET = os.getenv("FIREBASE_STORAGE_BUCKET", "user-echo-ui-navigator-screenshots")
+
+
 @app.post("/api/upload-screenshot")
 @limiter.limit("10/minute")
-async def upload_screenshot(request: Request, file: UploadFile = File(...)):
-    """Upload a screenshot to Cloud Storage."""
+async def upload_screenshot(request: Request, file: UploadFile = File(...), _user=Depends(verify_token)):
+    """Upload a screenshot to Google Cloud Storage."""
     try:
-        # TODO: Phase 5 — upload to GCS
-        filename = f"screenshots/{uuid.uuid4()}.png"
+        import asyncio
+        from google.cloud import storage as gcs
+
+        content_type = file.content_type or "image/png"
+        ext = "png" if "png" in content_type else "jpg"
+        filename = f"screenshots/{uuid.uuid4()}.{ext}"
+
+        max_size = 10 * 1024 * 1024  # 10 MB limit
+        chunks: list[bytes] = []
+        bytes_read = 0
+        while True:
+            chunk = await file.read(64 * 1024)  # 64 KB chunks
+            if not chunk:
+                break
+            bytes_read += len(chunk)
+            if bytes_read > max_size:
+                raise HTTPException(status_code=413, detail="File too large (10MB max)")
+            chunks.append(chunk)
+        data = b"".join(chunks)
+
+        def _upload() -> str:
+            from datetime import timedelta
+
+            client = gcs.Client()
+            bucket = client.bucket(GCS_BUCKET)
+            blob = bucket.blob(filename)
+            blob.upload_from_string(data, content_type=content_type)
+            signed_url = blob.generate_signed_url(
+                expiration=timedelta(hours=1),
+                method="GET",
+                response_type=content_type,
+            )
+            return signed_url
+
+        signed_url = await asyncio.to_thread(_upload)
+
         return {
-            "url": f"gs://user-echo-ui-navigator.appspot.com/{filename}",
+            "url": signed_url,
+            "gs_uri": f"gs://{GCS_BUCKET}/{filename}",
             "filename": filename,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("upload_screenshot failed")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -299,7 +376,7 @@ MCP_BRIDGE_URL = os.getenv("MCP_BRIDGE_URL", "http://localhost:3939")
 
 @app.post("/api/send-to-ide")
 @limiter.limit("20/minute")
-async def send_to_ide(request: Request, body: SendToIdeRequest):
+async def send_to_ide(request: Request, body: SendToIdeRequest, _user=Depends(verify_token)):
     """Forward confirmed prompt to MCP bridge."""
     try:
         payload = {
@@ -331,13 +408,29 @@ async def send_to_ide(request: Request, body: SendToIdeRequest):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-# ─── Export CSV ──────────────────────────────────────────────────
+# ─── Export CSV ──────────────────────────────────────────────
 @app.get("/api/export/csv")
-async def export_csv(session_id: str | None = None):
+async def export_csv(session_id: str | None = None, _user=Depends(verify_token)):
     """Export request history as CSV."""
     try:
-        # TODO: Phase 9 — implement Firestore query + CSV generation
-        return {"download_url": "", "count": 0}
+        import csv
+        import io
+
+        requests = await list_requests(session_id=session_id, limit=1000)
+        total = await count_requests(session_id=session_id)
+
+        if not requests:
+            return {"csv": "", "count": 0}
+
+        output = io.StringIO()
+        fields = ["request_id", "session_id", "created_at", "gesture_type",
+                  "selector", "page_url", "intent", "status", "prompt_text"]
+        writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        for req in requests:
+            writer.writerow(req)
+
+        return {"csv": output.getvalue(), "count": total}
     except Exception as e:
         logger.exception("export_csv failed")
         raise HTTPException(status_code=500, detail="Internal server error")

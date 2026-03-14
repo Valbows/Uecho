@@ -10,7 +10,16 @@ from fastapi.testclient import TestClient
 from src.api.routes import app
 
 
-client = TestClient(app)
+client: TestClient = None  # type: ignore[assignment]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _setup_client():
+    """Enter TestClient context to trigger async lifespan (vector store init)."""
+    global client
+    with TestClient(app) as c:
+        client = c
+        yield
 
 
 # ─── Unit Tests: Health Endpoint ─────────────────────────────────

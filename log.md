@@ -252,3 +252,70 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-14] [FIX] [MCP] — Removed duplicate shebang in compiled mcp-stdio-server.js: source had #!/usr/bin/env node AND tsup banner added another, causing SyntaxError; removed shebang from source, let tsup handle it`
 - `[2026-03-14] [FIX] [MCP] — Switched mcp_config.json from "npx tsx src/mcp-stdio-server.ts" to "node dist/mcp-stdio-server.js" — npx broke stdio pipe forwarding needed by MCP transport`
 - `[2026-03-14] [INFO] [MCP] — Manual E2E verified: extension → bridge queue → MCP stdio server → Cascade prompt retrieval (3 prompts received including "Increase container box size", "Update header font size", "Card Resize")`
+
+### Phase 9: Cloud Integration & Production Deployment
+
+#### 9a — Real Gemini Embeddings
+- `[2026-03-14] [FEAT] [EMBED] — Replaced hash-based stub with real Gemini embedding API (gemini-embedding-2-preview, 3072-dim)`
+- `[2026-03-14] [FEAT] [EMBED] — Migrated from deprecated google.generativeai to google.genai SDK with native async (client.aio.models.embed_content)`
+- `[2026-03-14] [FEAT] [EMBED] — embed_gesture, embed_text, embed_query now async; hash fallback when GEMINI_API_KEY not set`
+- `[2026-03-14] [FIX] [ROUTES] — Converted vector store init to async lifespan; await embed_gesture in process_gesture`
+- `[2026-03-14] [FIX] [TEST] — conftest unsets GEMINI_API_KEY to force hash fallback (tests: 0.77s vs 37s with real API)`
+
+#### 9b — Persistent Vector Store (ChromaDB)
+- `[2026-03-14] [FEAT] [VECTOR] — Replaced in-memory VectorStore with ChromaDB-backed persistent store (data/chroma/)`
+- `[2026-03-14] [FEAT] [VECTOR] — Ephemeral mode for tests, persistent for production; upsert to avoid duplicate seeds on restart`
+- `[2026-03-14] [FIX] [VECTOR] — ChromaDB rejects empty metadata dicts — conditionally pass metadatas only when non-empty`
+- `[2026-03-14] [FEAT] [STORE] — create_seeded_store skips re-embedding if collection already populated`
+
+#### 9c — Cloud Storage (GCS)
+- `[2026-03-14] [FEAT] [UPLOAD] — upload-screenshot endpoint: real GCS upload via google-cloud-storage SDK`
+- `[2026-03-14] [FEAT] [UPLOAD] — Returns public_url + gs_uri, 10MB file size limit, content-type detection`
+- `[2026-03-14] [INFO] [GCS] — Bucket: user-echo-ui-navigator-screenshots (us-central1)`
+
+#### 9d — Firestore Persistent Storage
+- `[2026-03-14] [FEAT] [FIRESTORE] — firestore_client.py: async Firestore client with in-memory fallback for tests`
+- `[2026-03-14] [FEAT] [FIRESTORE] — Session CRUD: create_session, get_session, update_session`
+- `[2026-03-14] [FEAT] [FIRESTORE] — Request history: save_request, get_request, list_requests, count_requests`
+- `[2026-03-14] [FEAT] [ROUTES] — process_gesture persists request to Firestore (fire-and-forget)`
+- `[2026-03-14] [FEAT] [ROUTES] — export-csv now queries Firestore and generates real CSV output`
+- `[2026-03-14] [FIX] [FIRESTORE] — Updated deprecated where() positional args to FieldFilter keyword syntax`
+
+#### 9e — Firebase Authentication
+- `[2026-03-14] [FEAT] [AUTH] — firebase_auth.py: Firebase Admin SDK token verification middleware`
+- `[2026-03-14] [FEAT] [AUTH] — Graceful fallback: auth disabled when Firebase Admin not configured (local dev/tests)`
+- `[2026-03-14] [FEAT] [AUTH] — verify_token dependency on protected routes: process-gesture, enhance-text, upload-screenshot, send-to-ide`
+- `[2026-03-14] [FEAT] [EXT] — Added identity permission and oauth2 config placeholder to manifest.json`
+
+#### 9f — Docker & Cloud Run
+- `[2026-03-14] [FEAT] [DOCKER] — Backend Dockerfile: Python 3.14-slim, non-root user, health check, ChromaDB volume`
+- `[2026-03-14] [FEAT] [DOCKER] — MCP bridge Dockerfile: Node 20-slim, health check`
+- `[2026-03-14] [FEAT] [DOCKER] — docker-compose.yml: backend + mcp-bridge services with shared .env`
+- `[2026-03-14] [FEAT] [DEPLOY] — cloudbuild.yaml: build → push → deploy to Cloud Run (us-central1, 512Mi, 0-3 instances)`
+
+#### 9g — CI/CD Pipeline
+- `[2026-03-14] [FEAT] [CI] — .github/workflows/ci.yml: test-backend → lint-extension → lint-mcp-bridge → deploy-backend`
+- `[2026-03-14] [FEAT] [CI] — Deploy job: Workload Identity Federation auth, GCR push, Cloud Run deploy (main branch only)`
+
+#### 9h — Permission Rollout & Chrome Web Store Prep
+- `[2026-03-14] [FEAT] [EXT] — Added identity permission for Google Sign-In via chrome.identity API`
+- `[2026-03-14] [FEAT] [EXT] — Added oauth2 config with scopes (openid, email, profile) and CWS key placeholder`
+
+#### Phase 9 Summary
+- `[2026-03-14] [INFO] [TEST] — Full suite after Phase 9: backend 87/87, all green in 0.77s`
+- `[2026-03-14] [INFO] [DEPS] — New dependencies: google-genai>=1.0.0, chromadb>=1.0.0`
+- `[2026-03-14] [INFO] [DEPS] — Removed: google-generativeai (deprecated)`
+
+### Security Hardening (Post Phase 9)
+- `[2026-03-14] [FIX] [AUTH] — Added Depends(verify_token) to export_csv endpoint (was the only unprotected mutation route)`
+- `[2026-03-14] [FIX] [UPLOAD] — Replaced blob.make_public() with generate_signed_url (1-hour expiry) to prevent permanent public exposure of screenshots`
+- `[2026-03-14] [FIX] [UPLOAD] — Replaced single file.read() with chunked 64KB streaming; raises 413 before full memory allocation on oversized uploads`
+- `[2026-03-14] [FIX] [ROUTES] — Replaced assert _vector_store with explicit RuntimeError raise (cannot be stripped by python -O)`
+- `[2026-03-14] [FIX] [FIRESTORE] — Fixed data override vulnerability in create_session and save_request: system fields now placed after **data spread so they always win`
+- `[2026-03-14] [FIX] [FIRESTORE] — Fixed update_session in-memory branch to create new session when missing, matching Firestore set(merge=True) behavior`
+- `[2026-03-14] [FIX] [AUTH] — Swapped exception handler order: catch ExpiredIdTokenError before InvalidIdTokenError (subclass-first)`
+- `[2026-03-14] [FIX] [AUTH] — Firebase init failure now raises RuntimeError when FIREBASE_AUTH_REQUIRED is set, instead of silently disabling auth`
+- `[2026-03-14] [FIX] [EMBED] — Added try/except in _gemini_embed with hash fallback on network/rate-limit/empty-response errors`
+- `[2026-03-14] [FIX] [DEPLOY] — Removed redundant images: section from cloudbuild.yaml (explicit push steps already handle pre-deploy push)`
+- `[2026-03-14] [FIX] [EXT] — Removed unused "identity" permission from manifest.json (no chrome.identity calls in codebase)`
+- `[2026-03-14] [INFO] [TEST] — Full suite after hardening: backend 87/87, extension 111/111, MCP bridge 38/38, Playwright E2E 33/33 (3 skipped)`

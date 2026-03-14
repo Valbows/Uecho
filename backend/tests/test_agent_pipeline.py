@@ -419,94 +419,94 @@ class TestVerificationEngine:
 
 # ─── Embedding Service ───────────────────────────────────────────
 class TestEmbeddingService:
-    def test_embed_gesture_returns_correct_dims(self, resize_payload):
-        vec = embed_gesture(resize_payload)
+    async def test_embed_gesture_returns_correct_dims(self, resize_payload):
+        vec = await embed_gesture(resize_payload)
         assert len(vec) == EMBEDDING_DIMENSIONS
 
-    def test_embed_text_returns_correct_dims(self):
-        vec = embed_text("resize a button wider")
+    async def test_embed_text_returns_correct_dims(self):
+        vec = await embed_text("resize a button wider")
         assert len(vec) == EMBEDDING_DIMENSIONS
 
-    def test_embedding_is_normalized(self, resize_payload):
+    async def test_embedding_is_normalized(self, resize_payload):
         import math
-        vec = embed_gesture(resize_payload)
+        vec = await embed_gesture(resize_payload)
         norm = math.sqrt(sum(x * x for x in vec))
         assert abs(norm - 1.0) < 0.01
 
-    def test_same_input_same_output(self, resize_payload):
-        v1 = embed_gesture(resize_payload)
-        v2 = embed_gesture(resize_payload)
+    async def test_same_input_same_output(self, resize_payload):
+        v1 = await embed_gesture(resize_payload)
+        v2 = await embed_gesture(resize_payload)
         assert v1 == v2
 
-    def test_different_input_different_output(self, resize_payload, move_payload):
-        v1 = embed_gesture(resize_payload)
-        v2 = embed_gesture(move_payload)
+    async def test_different_input_different_output(self, resize_payload, move_payload):
+        v1 = await embed_gesture(resize_payload)
+        v2 = await embed_gesture(move_payload)
         assert v1 != v2
 
-    def test_cosine_similarity_identical(self):
-        vec = embed_text("hello world")
+    async def test_cosine_similarity_identical(self):
+        vec = await embed_text("hello world")
         assert abs(cosine_similarity(vec, vec) - 1.0) < 0.001
 
-    def test_cosine_similarity_range(self):
-        v1 = embed_text("resize button")
-        v2 = embed_text("move sidebar")
+    async def test_cosine_similarity_range(self):
+        v1 = await embed_text("resize button")
+        v2 = await embed_text("move sidebar")
         sim = cosine_similarity(v1, v2)
         assert -1.0 <= sim <= 1.0
 
 
 # ─── Vector Store ─────────────────────────────────────────────────
 class TestVectorStore:
-    def test_empty_store(self):
-        store = VectorStore()
+    async def test_empty_store(self):
+        store = VectorStore(ephemeral=True)
         assert store.size == 0
-        assert store.search(embed_text("test")) == []
+        assert store.search(await embed_text("test")) == []
 
-    def test_add_and_size(self):
-        store = VectorStore()
-        store.add("1", "test entry", embed_text("test entry"))
+    async def test_add_and_size(self):
+        store = VectorStore(ephemeral=True)
+        store.add("1", "test entry", await embed_text("test entry"))
         assert store.size == 1
 
-    def test_search_returns_results(self):
-        store = VectorStore()
-        store.add("1", "resize a button", embed_text("resize a button"))
-        store.add("2", "move a sidebar", embed_text("move a sidebar"))
-        results = store.search(embed_text("make button bigger"))
+    async def test_search_returns_results(self):
+        store = VectorStore(ephemeral=True)
+        store.add("1", "resize a button", await embed_text("resize a button"))
+        store.add("2", "move a sidebar", await embed_text("move a sidebar"))
+        results = store.search(await embed_text("make button bigger"))
         assert len(results) > 0
 
-    def test_search_respects_top_k(self):
-        store = VectorStore()
+    async def test_search_respects_top_k(self):
+        store = VectorStore(ephemeral=True)
         for i in range(10):
-            store.add(str(i), f"entry {i}", embed_text(f"entry {i}"))
-        results = store.search(embed_text("test"), top_k=3)
+            store.add(str(i), f"entry {i}", await embed_text(f"entry {i}"))
+        results = store.search(await embed_text("test"), top_k=3)
         assert len(results) == 3
 
-    def test_search_returns_scores(self):
-        store = VectorStore()
-        store.add("1", "resize btn", embed_text("resize btn"))
-        results = store.search(embed_text("resize btn"))
+    async def test_search_returns_scores(self):
+        store = VectorStore(ephemeral=True)
+        store.add("1", "resize btn", await embed_text("resize btn"))
+        results = store.search(await embed_text("resize btn"))
         entry, score = results[0]
-        assert abs(score - 1.0) < 0.001  # identical text → perfect match
+        assert abs(score - 1.0) < 0.01  # ChromaDB cosine distance rounding
 
-    def test_clear(self):
-        store = VectorStore()
-        store.add("1", "test", embed_text("test"))
+    async def test_clear(self):
+        store = VectorStore(ephemeral=True)
+        store.add("1", "test", await embed_text("test"))
         store.clear()
         assert store.size == 0
 
 
 # ─── Seeded Example Store ────────────────────────────────────────
 class TestExampleStore:
-    def test_seeded_store_has_entries(self):
-        store = create_seeded_store()
+    async def test_seeded_store_has_entries(self):
+        store = await create_seeded_store(ephemeral=True)
         assert store.size == len(SEED_EXAMPLES)
 
-    def test_seeded_store_search_returns_results(self):
-        store = create_seeded_store()
-        results = store.search(embed_text("resize a button wider"))
+    async def test_seeded_store_search_returns_results(self):
+        store = await create_seeded_store(ephemeral=True)
+        results = store.search(await embed_text("resize a button wider"))
         assert len(results) > 0
 
-    def test_seeded_store_resize_query_matches_resize_examples(self):
-        store = create_seeded_store()
-        results = store.search(embed_text("resize a button wider"), top_k=3)
+    async def test_seeded_store_resize_query_matches_resize_examples(self):
+        store = await create_seeded_store(ephemeral=True)
+        results = store.search(await embed_text("resize a button wider"), top_k=3)
         categories = [entry.metadata.get("category") for entry, _ in results]
         assert "resize" in categories
