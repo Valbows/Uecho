@@ -77,8 +77,52 @@ uvicorn src.api.routes:app --reload --port 8080
 ```bash
 cd mcp-bridge
 npm install
-npm run dev
+npm run dev          # HTTP bridge on port 3939
+npm run build        # Build compiled output (tsup)
 ```
+
+### Windsurf MCP Integration
+
+Add U:Echo to your Windsurf MCP config (`~/.codeium/windsurf/mcp_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "uecho": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp-stdio-server.ts"],
+      "cwd": "/path/to/uecho/mcp-bridge",
+      "env": {
+        "UECHO_BRIDGE_URL": "http://localhost:3939"
+      }
+    }
+  }
+}
+```
+
+Or using the compiled build:
+```json
+{
+  "mcpServers": {
+    "uecho": {
+      "command": "node",
+      "args": ["dist/mcp-stdio-server.js"],
+      "cwd": "/path/to/uecho/mcp-bridge"
+    }
+  }
+}
+```
+
+**Available MCP tools:**
+- `get_uecho_prompts` — List pending design-change prompts
+- `get_uecho_prompt_detail` — Get full prompt content by ID
+- `apply_uecho_prompt` — Mark prompt as delivered and return implementation instructions
+- `uecho_bridge_status` — Check bridge connectivity
+
+**MCP prompt:**
+- `uecho_apply` — Appears in Cascade's prompt picker; auto-selects the latest queued prompt and returns developer-ready instructions
+
+**Real-time notifications:** The MCP server connects to the bridge's SSE endpoint and notifies Cascade when new prompts arrive via `prompts/list_changed`.
 
 ## Permissions & Site Access
 

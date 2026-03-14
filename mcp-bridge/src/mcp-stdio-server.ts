@@ -257,11 +257,202 @@ server.tool(
   }
 );
 
+// ─── MCP Prompt: uecho_apply ─────────────────────────────────────
+// Registers a dynamic MCP prompt so queued U:Echo prompts appear in
+// Cascade's prompt picker. When invoked, returns the developer-ready
+// instruction for the selected prompt.
+
+server.prompt(
+  'uecho_apply',
+  'Apply a pending U:Echo design-change prompt. Lists queued prompts and returns the selected one as a developer-ready instruction.',
+  {
+    prompt_id: z.string().optional().describe('Specific prompt ID to apply. If omitted, returns the most recent queued prompt.'),
+  },
+  async ({ prompt_id }) => {
+    let targetId = prompt_id;
+
+    // If no specific ID, get the most recent queued prompt
+    if (!targetId) {
+      const list = await bridgeFetch<{
+        prompts: Array<{ prompt_id: string; feature_name: string; selector: string; action_type: string; status: string }>;
+      }>('/prompts?status=queued&limit=1');
+
+      if (!list || list.prompts.length === 0) {
+        return {
+          messages: [
+            {
+              role: 'user',
+              content: {
+                type: 'text',
+                text: 'No pending U:Echo prompts. Use the Chrome extension to generate design-change prompts first.',
+              },
+            },
+          ],
+        };
+      }
+      targetId = list.prompts[0].prompt_id;
+    }
+
+    // Fetch full prompt detail
+    const data = await bridgeFetch<{
+      prompt_id: string;
+      formatted: { content: string };
+      feature_name: string;
+      selector: string;
+      action_type: string;
+    }>(`/prompts/${targetId}`);
+
+    if (!data) {
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: `Prompt ${targetId} not found. It may have expired or the bridge is not running.`,
+            },
+          },
+        ],
+      };
+    }
+
+    // Mark as delivered
+    await bridgeFetch(`/prompts/${targetId}/deliver`, { method: 'POST' });
+
+    return {
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text:
+              `Please implement the following U:Echo design change:\n\n` +
+              `**Feature:** ${data.feature_name}\n` +
+              `**Selector:** \`${data.selector}\`\n` +
+              `**Action:** ${data.action_type}\n\n` +
+              `---\n\n` +
+              data.formatted.content,
+          },
+        },
+      ],
+    };
+  }
+);
+
+// ─── SSE Bridge Listener ─────────────────────────────────────────
+// Connects to the bridge's /events SSE endpoint to receive real-time
+// notifications when prompts are queued, delivered, or failed.
+// Calls server.sendPromptListChanged() so Cascade knows the prompt
+// list has been updated.
+
+let sseRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let sseAbortController: AbortController | null = null;
+let sseReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+const SSE_RECONNECT_MS = 3000;
+
+function abortCurrentSSE(): void {
+  if (sseAbortController) {
+    sseAbortController.abort();
+    sseAbortController = null;
+  }
+  if (sseReader) {
+    sseReader.cancel().catch(() => {});
+    sseReader = null;
+  }
+}
+
+function connectBridgeSSE(): void {
+  // Abort any existing connection before starting a new one
+  abortCurrentSSE();
+
+  const url = `${BRIDGE_URL}/events`;
+  process.stderr.write(`[U:Echo MCP] Connecting to bridge SSE: ${url}\n`);
+
+  sseAbortController = new AbortController();
+  const { signal } = sseAbortController;
+
+  fetch(url, {
+    headers: { Accept: 'text/event-stream' },
+    signal,
+  })
+    .then(async (res) => {
+      if (!res.ok || !res.body) {
+        throw new Error(`SSE connection failed: ${res.status}`);
+      }
+
+      process.stderr.write(`[U:Echo MCP] SSE connected\n`);
+
+      const reader = res.body.getReader();
+      sseReader = reader;
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              const event = line.slice(6).trim();
+              if (
+                event === 'prompt_queued' ||
+                event === 'prompt_delivered' ||
+                event === 'prompt_failed'
+              ) {
+                try {
+                  server.server.sendPromptListChanged();
+                } catch {
+                  // Server not connected yet, ignore
+                }
+              }
+            }
+          }
+        }
+      } finally {
+        sseReader = null;
+      }
+
+      // Stream ended naturally, reconnect
+      process.stderr.write(`[U:Echo MCP] SSE stream ended, reconnecting...\n`);
+      scheduleSseReconnect();
+    })
+    .catch((err) => {
+      if (signal.aborted) return; // Intentional abort, don't reconnect
+      process.stderr.write(`[U:Echo MCP] SSE error: ${err}\n`);
+      scheduleSseReconnect();
+    });
+}
+
+function scheduleSseReconnect(): void {
+  if (sseRetryTimer) clearTimeout(sseRetryTimer);
+  sseRetryTimer = setTimeout(connectBridgeSSE, SSE_RECONNECT_MS);
+}
+
+function shutdownSSE(): void {
+  if (sseRetryTimer) {
+    clearTimeout(sseRetryTimer);
+    sseRetryTimer = null;
+  }
+  abortCurrentSSE();
+}
+
+process.on('SIGINT', () => { shutdownSSE(); process.exit(0); });
+process.on('SIGTERM', () => { shutdownSSE(); process.exit(0); });
+process.on('exit', () => { shutdownSSE(); });
+
 // ─── Start ───────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Start SSE listener after MCP connection is established
+  connectBridgeSSE();
 }
 
 main().catch((err) => {

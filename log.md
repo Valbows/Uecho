@@ -227,5 +227,13 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-14] [BUG] [EXT] — chrome.tabs.captureVisibleTab failed with "activeTab permission required" because gesture-triggered screenshots fire asynchronously after activeTab grant expires → restored <all_urls> in host_permissions`
 - `[2026-03-14] [FIX] [DOCS] — Updated README Permissions section to document why <all_urls> is required for captureVisibleTab`
 - `[2026-03-14] [FIX] [EXT] — Fixed HistoryScreen onClick={fetchHistory} type error — wrapped in arrow function to avoid passing MouseEvent as AbortSignal`
-- `[2026-03-14] [INFO] [TEST] — Final full suite run: Extension Jest 111/111, MCP Bridge Jest 34/34, Backend pytest 87/87, Playwright E2E 33 passed/3 skipped`
-- `[2026-03-14] [INFO] [TEST] — Aggregate: 265 tests, 0 failures, 3 skipped (overlay injection in test env)`
+- `[2026-03-14] [INFO] [TEST] — Full suite run: Extension Jest 111/111, MCP Bridge Jest 34/34, Backend pytest 87/87, Playwright E2E 33 passed/3 skipped`
+
+### MCP Prompt Delivery Feature
+- `[2026-03-14] [FIX] [MCP] — Replaced tsc build with tsup bundler to fix ESM module resolution (ERR_MODULE_NOT_FOUND on compiled imports)`
+- `[2026-03-14] [FEAT] [MCP] — Added MCP Prompt registration (uecho_apply) in stdio server — prompts appear in Cascade's prompt picker and return developer-ready instructions`
+- `[2026-03-14] [FEAT] [MCP] — Added SSE bridge listener in stdio server — connects to /events endpoint, calls sendPromptListChanged() on prompt_queued/delivered/failed for real-time Cascade notification`
+- `[2026-03-14] [FEAT] [MCP] — SSE reconnect with 3s backoff if bridge connection drops`
+- `[2026-03-14] [INFO] [DOCS] — Documented Windsurf MCP integration in README: mcp_config.json setup (tsx and compiled), tool/prompt reference, real-time notification`
+- `[2026-03-14] [INFO] [TEST] — Added 4 delivery lifecycle integration tests: queue→detail→deliver, queue→fail, 404 on unknown deliver/fail`
+- `[2026-03-14] [FIX] [MCP] — Added proper SSE cleanup: AbortController for fetch, reader.cancel() on abort, shutdownSSE() wired to SIGINT/SIGTERM/exit for graceful resource disposal and reconnect control`

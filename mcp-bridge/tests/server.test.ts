@@ -337,6 +337,91 @@ describe('MCP Bridge: SSE Events', () => {
   }, 10000);
 });
 
+// ─── Delivery Lifecycle ─────────────────────────────────────────
+describe('MCP Bridge: Delivery Lifecycle', () => {
+  beforeEach(() => {
+    clearQueue();
+  });
+
+  it('should support full queue → detail → deliver lifecycle', async () => {
+    // 1. Queue a prompt
+    const queueRes = await request(app)
+      .post('/prompt')
+      .send({
+        prompt_text: 'Make the header font larger',
+        feature_name: 'Header Font',
+        selector: 'h1.title',
+        action_type: 'modify',
+        ide_target: 'windsurf',
+      });
+    expect(queueRes.status).toBe(200);
+    const { prompt_id } = queueRes.body;
+    expect(prompt_id).toBeDefined();
+
+    // 2. List prompts — should appear as queued
+    const listRes = await request(app).get('/prompts?status=queued');
+    expect(listRes.body.prompts.length).toBeGreaterThan(0);
+    const found = listRes.body.prompts.find((p: { prompt_id: string }) => p.prompt_id === prompt_id);
+    expect(found).toBeDefined();
+    expect(found.status).toBe('queued');
+
+    // 3. Get detail
+    const detailRes = await request(app).get(`/prompts/${prompt_id}`);
+    expect(detailRes.status).toBe(200);
+    expect(detailRes.body.formatted).toBeDefined();
+    expect(detailRes.body.formatted.content).toContain('Header Font');
+
+    // 4. Mark as delivered
+    const deliverRes = await request(app).post(`/prompts/${prompt_id}/deliver`);
+    expect(deliverRes.status).toBe(200);
+    expect(deliverRes.body.status).toBe('delivered');
+
+    // 5. Verify status changed
+    const afterRes = await request(app).get(`/prompts/${prompt_id}`);
+    expect(afterRes.body.status).toBe('delivered');
+
+    // 6. Should not appear in queued list
+    const queuedRes = await request(app).get('/prompts?status=queued');
+    const stillQueued = queuedRes.body.prompts.find((p: { prompt_id: string }) => p.prompt_id === prompt_id);
+    expect(stillQueued).toBeUndefined();
+  });
+
+  it('should support queue → fail lifecycle', async () => {
+    const queueRes = await request(app)
+      .post('/prompt')
+      .send({
+        prompt_text: 'Test fail flow',
+        feature_name: 'Fail Test',
+        selector: '.fail',
+        action_type: 'resize',
+        ide_target: 'cursor',
+      });
+    const { prompt_id } = queueRes.body;
+
+    const failRes = await request(app)
+      .post(`/prompts/${prompt_id}/fail`)
+      .send({ error: 'Implementation rejected by user' });
+    expect(failRes.status).toBe(200);
+    expect(failRes.body.status).toBe('failed');
+
+    const detailRes = await request(app).get(`/prompts/${prompt_id}`);
+    expect(detailRes.body.status).toBe('failed');
+    expect(detailRes.body.error).toBe('Implementation rejected by user');
+  });
+
+  it('should return 404 for deliver on unknown ID', async () => {
+    const res = await request(app).post('/prompts/nonexistent-id/deliver');
+    expect(res.status).toBe(404);
+  });
+
+  it('should return 404 for fail on unknown ID', async () => {
+    const res = await request(app)
+      .post('/prompts/nonexistent-id/fail')
+      .send({ error: 'test' });
+    expect(res.status).toBe(404);
+  });
+});
+
 // ─── Health Extended ─────────────────────────────────────────────
 describe('MCP Bridge: Health Extended', () => {
   it('should include supported_ides in health', async () => {
