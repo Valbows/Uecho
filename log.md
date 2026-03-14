@@ -237,3 +237,18 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-14] [INFO] [DOCS] — Documented Windsurf MCP integration in README: mcp_config.json setup (tsx and compiled), tool/prompt reference, real-time notification`
 - `[2026-03-14] [INFO] [TEST] — Added 4 delivery lifecycle integration tests: queue→detail→deliver, queue→fail, 404 on unknown deliver/fail`
 - `[2026-03-14] [FIX] [MCP] — Added proper SSE cleanup: AbortController for fetch, reader.cancel() on abort, shutdownSSE() wired to SIGINT/SIGTERM/exit for graceful resource disposal and reconnect control`
+
+### Codebase Cleanup & Refactoring
+- `[2026-03-14] [CLEANUP] — Deleted backend/.venv (680MB duplicate of backend/venv)`
+- `[2026-03-14] [CLEANUP] — Removed 7 empty directories: backend/seed, agents/action-recorder, agents/prompt-builder, agents/verification, extension/src/popup, sidepanel/stores, tests/integration`
+- `[2026-03-14] [CLEANUP] — Deleted extension/jest.config.ts.bak (superseded by jest.config.js)`
+- `[2026-03-14] [CLEANUP] — Confirmed extension/public/src/content/content-style.css is required by Vite build (copies to dist/ for manifest reference) — retained`
+- `[2026-03-14] [CLEANUP] — Deleted stale plan.md (Phase 0 artifact, never updated)`
+- `[2026-03-14] [REFACTOR] [EXT] — Added BACKEND_URL to shared/constants.ts; service-worker.ts now imports BACKEND_URL and MCP_BRIDGE_URL from constants instead of hardcoding`
+- `[2026-03-14] [FIX] [EXT] — Updated EMBEDDING_DIMENSIONS from 1408 (multimodalembedding@001) to 3072 (gemini-embedding-2-preview); updated corresponding unit test`
+- `[2026-03-14] [REFACTOR] [DOCS] — Rewrote docs/architecture.md: replaced Vertex AI/Firestore/Firebase Auth references with AI Studio/local backend/MCP stdio server; updated embedding model and dimensions`
+- `[2026-03-14] [INFO] [TEST] — Post-cleanup full suite: Extension Jest 111/111, MCP Bridge Jest 38/38, Backend pytest 87/87, Playwright E2E 33 passed/3 skipped — all green`
+- `[2026-03-14] [FIX] [DOCS] — Fixed inconsistent Gemini model names in architecture.md: standardised to gemini-3.1-flash-lite-preview everywhere`
+- `[2026-03-14] [FIX] [MCP] — Removed duplicate shebang in compiled mcp-stdio-server.js: source had #!/usr/bin/env node AND tsup banner added another, causing SyntaxError; removed shebang from source, let tsup handle it`
+- `[2026-03-14] [FIX] [MCP] — Switched mcp_config.json from "npx tsx src/mcp-stdio-server.ts" to "node dist/mcp-stdio-server.js" — npx broke stdio pipe forwarding needed by MCP transport`
+- `[2026-03-14] [INFO] [MCP] — Manual E2E verified: extension → bridge queue → MCP stdio server → Cascade prompt retrieval (3 prompts received including "Increase container box size", "Update header font size", "Card Resize")`

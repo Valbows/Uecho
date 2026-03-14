@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * U:Echo — MCP Stdio Server for Windsurf/Cascade
  *
@@ -417,9 +416,11 @@ function connectBridgeSSE(): void {
         sseReader = null;
       }
 
-      // Stream ended naturally, reconnect
-      process.stderr.write(`[U:Echo MCP] SSE stream ended, reconnecting...\n`);
-      scheduleSseReconnect();
+      // Stream ended — only reconnect if it wasn't an intentional abort
+      if (!signal.aborted) {
+        process.stderr.write(`[U:Echo MCP] SSE stream ended, reconnecting...\n`);
+        scheduleSseReconnect();
+      }
     })
     .catch((err) => {
       if (signal.aborted) return; // Intentional abort, don't reconnect

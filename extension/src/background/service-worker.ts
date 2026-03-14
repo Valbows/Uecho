@@ -10,7 +10,7 @@ import type {
   OffscreenMessage,
 } from '@shared/messages';
 import type { ConnectivityStatus, ElementInfo } from '@shared/types';
-import { STORAGE_KEYS, API_ENDPOINTS } from '@shared/constants';
+import { STORAGE_KEYS, API_ENDPOINTS, BACKEND_URL, MCP_BRIDGE_URL } from '@shared/constants';
 import { ActionRecorder } from './recorder';
 import { RequestQueue } from './request-queue';
 import { SessionManager } from './session-manager';
@@ -21,9 +21,6 @@ import {
   validateActivateAgent,
   sanitizeString,
 } from './message-validator';
-
-const BACKEND_URL = 'http://localhost:8080';
-const MCP_BRIDGE_URL = 'http://localhost:3939';
 
 // ─── Module Instances ───────────────────────────────────────────
 const sessionManager = new SessionManager();

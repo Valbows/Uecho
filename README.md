@@ -83,15 +83,18 @@ npm run build        # Build compiled output (tsup)
 
 ### Windsurf MCP Integration
 
-Add U:Echo to your Windsurf MCP config (`~/.codeium/windsurf/mcp_config.json`):
+First build the MCP server, then add it to your Windsurf MCP config (`~/.codeium/windsurf/mcp_config.json`):
+
+```bash
+cd mcp-bridge && npm run build
+```
 
 ```json
 {
   "mcpServers": {
     "uecho": {
-      "command": "npx",
-      "args": ["tsx", "src/mcp-stdio-server.ts"],
-      "cwd": "/path/to/uecho/mcp-bridge",
+      "command": "node",
+      "args": ["/path/to/uecho/mcp-bridge/dist/mcp-stdio-server.js"],
       "env": {
         "UECHO_BRIDGE_URL": "http://localhost:3939"
       }
@@ -100,18 +103,7 @@ Add U:Echo to your Windsurf MCP config (`~/.codeium/windsurf/mcp_config.json`):
 }
 ```
 
-Or using the compiled build:
-```json
-{
-  "mcpServers": {
-    "uecho": {
-      "command": "node",
-      "args": ["dist/mcp-stdio-server.js"],
-      "cwd": "/path/to/uecho/mcp-bridge"
-    }
-  }
-}
-```
+> **Note:** Use absolute paths for the `args` entry. The `npx tsx` approach is not recommended — it can break stdio pipe forwarding required by the MCP transport.
 
 **Available MCP tools:**
 - `get_uecho_prompts` — List pending design-change prompts

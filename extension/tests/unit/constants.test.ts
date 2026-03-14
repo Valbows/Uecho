@@ -74,8 +74,8 @@ describe('Shared Constants', () => {
       expect(MAX_AGENT_INVOCATIONS_PER_MINUTE).toBeGreaterThan(0);
     });
 
-    it('should use 1408-dimensional embeddings', () => {
-      expect(EMBEDDING_DIMENSIONS).toBe(1408);
+    it('should use 3072-dimensional embeddings', () => {
+      expect(EMBEDDING_DIMENSIONS).toBe(3072);
     });
 
     it('should retrieve top-3 vector results', () => {

@@ -16,6 +16,9 @@ export const DEFAULT_GRID_CELL_SIZE = 1; // px
 export const DEFAULT_OVERLAY_MODE = 'off' as const;
 export const DEFAULT_IDE_TARGET = 'windsurf' as const;
 
+// Backend API URL (FastAPI server)
+export const BACKEND_URL = 'http://localhost:8080';
+
 // MCP bridge URL (local service that queues prompts for IDE delivery)
 export const MCP_BRIDGE_URL = 'http://localhost:3939';
 
@@ -37,7 +40,7 @@ export const MAX_AGENT_INVOCATIONS_PER_MINUTE = 10;
 export const AGENT_RETRY_COUNT = 2;
 
 // Embedding
-export const EMBEDDING_DIMENSIONS = 1408;
+export const EMBEDDING_DIMENSIONS = 3072;
 export const VECTOR_SEARCH_TOP_K = 3;
 export const VECTOR_SIMILARITY_THRESHOLD = 0.75;
 
