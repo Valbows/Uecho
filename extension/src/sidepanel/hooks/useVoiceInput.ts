@@ -1,10 +1,14 @@
 /**
  * U:Echo — Voice Input Hook
- * Provides speech-to-text via the Web Speech API (SpeechRecognition).
- * Falls back gracefully when the API is unavailable (e.g., Firefox, headless tests).
+ * Uses chrome.runtime messaging to relay speech recognition through an offscreen
+ * document, since the Web Speech API is unavailable in extension side panels.
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+
+const SpeechRecognitionAPI =
+  (window as unknown as Record<string, unknown>).SpeechRecognition ??
+  (window as unknown as Record<string, unknown>).webkitSpeechRecognition;
 
 export type VoiceStatus = 'idle' | 'listening' | 'processing' | 'error';
 
@@ -20,7 +24,7 @@ interface UseVoiceInputOptions {
 }
 
 interface UseVoiceInputReturn {
-  /** Whether the Web Speech API is available */
+  /** Whether voice input is available (offscreen doc supports SpeechRecognition) */
   isSupported: boolean;
   /** Current voice input status */
   status: VoiceStatus;
@@ -36,13 +40,6 @@ interface UseVoiceInputReturn {
   clearTranscript: () => void;
 }
 
-// Detect SpeechRecognition API (vendor-prefixed in Chrome)
-const SpeechRecognitionAPI =
-  typeof window !== 'undefined'
-    ? (window as unknown as Record<string, unknown>).SpeechRecognition ??
-      (window as unknown as Record<string, unknown>).webkitSpeechRecognition
-    : undefined;
-
 export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInputReturn {
   const {
     lang = 'en-US',
@@ -51,94 +48,194 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     onError,
   } = options;
 
+  const [isSupported, setIsSupported] = useState(false);
   const [status, setStatus] = useState<VoiceStatus>('idle');
   const [transcript, setTranscript] = useState('');
   const transcriptRef = useRef('');
+  const onTranscriptRef = useRef(onTranscript);
+  const onErrorRef = useRef(onError);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const isSupported = !!SpeechRecognitionAPI;
+  const permissionTabOpenedRef = useRef(false);
+  onTranscriptRef.current = onTranscript;
+  onErrorRef.current = onError;
 
-  // Cleanup on unmount
   useEffect(() => {
-    return () => {
-      recognitionRef.current?.abort();
-      recognitionRef.current = null;
-    };
-  }, []);
-
-  const startListening = useCallback(() => {
-    if (!SpeechRecognitionAPI) {
-      setStatus('error');
-      onError?.('Speech recognition is not supported in this browser.');
+    if (SpeechRecognitionAPI) {
+      setIsSupported(true);
       return;
     }
 
-    // Abort any existing session
-    recognitionRef.current?.abort();
+    chrome.runtime.sendMessage(
+      { type: 'SP_VOICE_CHECK_SUPPORT' },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          // Extension context issue — voice not available
+          setIsSupported(false);
+          return;
+        }
+        setIsSupported(response?.supported ?? false);
+      }
+    );
+  }, []);
 
-    const recognition = new (SpeechRecognitionAPI as new () => SpeechRecognition)();
-    recognition.lang = lang;
-    recognition.interimResults = interimResults;
-    recognition.continuous = true;
-    recognition.maxAlternatives = 1;
+  useEffect(() => {
+    if (SpeechRecognitionAPI) return;
 
-    recognition.onstart = () => {
-      setStatus('listening');
-    };
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let finalText = '';
-      let interimText = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          finalText += result[0].transcript;
-        } else {
-          interimText += result[0].transcript;
+    const listener = (message: { type: string; [key: string]: unknown }) => {
+      if (message.type === 'VOICE_STATUS') {
+        const newStatus = message.status as VoiceStatus;
+        setStatus(newStatus);
+        if (newStatus === 'error' && message.error) {
+          onErrorRef.current?.(message.error as string);
         }
       }
 
-      if (finalText) {
-        setTranscript((prev) => {
-          const updated = prev + (prev ? ' ' : '') + finalText.trim();
-          transcriptRef.current = updated;
-          return updated;
-        });
-        onTranscript?.(transcriptRef.current, true);
-      } else if (interimText) {
-        onTranscript?.(interimText, false);
+      if (message.type === 'VOICE_TRANSCRIPT') {
+        const text = message.text as string;
+        const isFinal = message.isFinal as boolean;
+
+        if (isFinal) {
+          setTranscript((prev) => {
+            const updated = prev + (prev ? ' ' : '') + text.trim();
+            transcriptRef.current = updated;
+            return updated;
+          });
+          onTranscriptRef.current?.(transcriptRef.current, true);
+        } else {
+          onTranscriptRef.current?.(text, false);
+        }
       }
     };
 
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      // 'no-speech' and 'aborted' are not real errors
-      if (event.error === 'no-speech' || event.error === 'aborted') {
-        return;
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+        recognitionRef.current = null;
       }
-      setStatus('error');
-      onError?.(event.error);
     };
+  }, []);
 
-    recognition.onend = () => {
-      // Only set idle if we didn't already set error
-      setStatus((prev) => (prev === 'error' ? 'error' : 'idle'));
-      recognitionRef.current = null;
-    };
-
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-    } catch {
-      setStatus('error');
-      onError?.('Failed to start speech recognition.');
+  const openPermissionTab = useCallback(() => {
+    if (!permissionTabOpenedRef.current) {
+      permissionTabOpenedRef.current = true;
+      chrome.tabs.create({
+        url: chrome.runtime.getURL('src/mic-permission/mic-permission.html'),
+      });
     }
-  }, [lang, interimResults, onTranscript, onError]);
+  }, []);
+
+  const handlePermissionError = useCallback((message: string) => {
+    console.warn('[U:Echo] Mic permission denied:', message);
+    openPermissionTab();
+    onErrorRef.current?.(
+      'Microphone permission is blocked. A U:Echo permission tab was opened — allow microphone there, then return and tap the mic again.'
+    );
+    setStatus('error');
+  }, [openPermissionTab]);
+
+  const startListening = useCallback(() => {
+    if (SpeechRecognitionAPI) {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+        recognitionRef.current = null;
+      }
+
+      const rec = new (SpeechRecognitionAPI as new () => SpeechRecognition)();
+      rec.lang = lang;
+      rec.interimResults = interimResults;
+      rec.continuous = true;
+      rec.maxAlternatives = 1;
+
+      rec.onstart = () => {
+        permissionTabOpenedRef.current = false;
+        setStatus('listening');
+      };
+
+      rec.onresult = (event: SpeechRecognitionEvent) => {
+        let finalText = '';
+        let interimText = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          if (result.isFinal) {
+            finalText += result[0].transcript;
+          } else {
+            interimText += result[0].transcript;
+          }
+        }
+
+        if (finalText) {
+          const trimmed = finalText.trim();
+          const updated = transcriptRef.current + (transcriptRef.current ? ' ' : '') + trimmed;
+          transcriptRef.current = updated;
+          setTranscript(updated);
+          onTranscriptRef.current?.(updated, true);
+        } else if (interimText) {
+          onTranscriptRef.current?.(interimText, false);
+        }
+      };
+
+      rec.onerror = (event: SpeechRecognitionErrorEvent) => {
+        if (event.error === 'no-speech' || event.error === 'aborted') return;
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          handlePermissionError(event.error);
+          return;
+        }
+        onErrorRef.current?.(event.error);
+        setStatus('error');
+      };
+
+      rec.onend = () => {
+        recognitionRef.current = null;
+        setStatus('idle');
+      };
+
+      recognitionRef.current = rec;
+
+      try {
+        rec.start();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/not-allowed/i.test(msg) || /service-not-allowed/i.test(msg)) {
+          handlePermissionError(msg);
+          return;
+        }
+        onErrorRef.current?.(msg);
+        setStatus('error');
+      }
+      return;
+    }
+
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      stream.getTracks().forEach((t) => t.stop());
+      chrome.runtime.sendMessage({
+        type: 'SP_VOICE_START',
+        payload: { lang, interimResults },
+      });
+    }).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/permission dismissed/i.test(msg) || /notallowederror/i.test(msg)) {
+        handlePermissionError(msg);
+      } else {
+        onErrorRef.current?.(`Microphone access denied: ${msg}`);
+        setStatus('error');
+      }
+    });
+  }, [lang, interimResults, handlePermissionError]);
 
   const stopListening = useCallback(() => {
     if (recognitionRef.current) {
       setStatus('processing');
       recognitionRef.current.stop();
+      return;
     }
+    setStatus('processing');
+    chrome.runtime.sendMessage({ type: 'SP_VOICE_STOP' });
   }, []);
 
   const toggleListening = useCallback(() => {
@@ -151,6 +248,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
 
   const clearTranscript = useCallback(() => {
     setTranscript('');
+    transcriptRef.current = '';
   }, []);
 
   return {

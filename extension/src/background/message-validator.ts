@@ -20,9 +20,18 @@ const VALID_SP_TYPES = new Set([
   'SP_UPDATE_SETTINGS',
   'SP_CHECK_CONNECTIVITY',
   'SP_EXPORT_CSV',
+  'SP_VOICE_START',
+  'SP_VOICE_STOP',
+  'SP_VOICE_CHECK_SUPPORT',
 ]);
 
-const ALL_VALID_TYPES = new Set([...VALID_CS_TYPES, ...VALID_SP_TYPES]);
+// Messages sent FROM the offscreen document back to the service worker
+const VALID_OFFSCREEN_TYPES = new Set([
+  'VOICE_STATUS',
+  'VOICE_TRANSCRIPT',
+]);
+
+const ALL_VALID_TYPES = new Set([...VALID_CS_TYPES, ...VALID_SP_TYPES, ...VALID_OFFSCREEN_TYPES]);
 
 const MAX_STRING_LENGTH = 10_000;
 const MAX_PROMPT_TEXT_LENGTH = 5_000;

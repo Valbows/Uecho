@@ -39,6 +39,7 @@ firebase-debug.log
 coverage/
 .pytest_cache/
 htmlcov/
+extension/test-results/
 
 # OS
 Thumbs.db

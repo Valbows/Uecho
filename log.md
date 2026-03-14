@@ -193,3 +193,39 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - **Full support (optional):** Switch to `https://*/*` or use Chrome optional permissions API (`chrome.permissions.request`) for on-demand site access — avoids permission escalation prompts for existing users
 - **Files to update:** `extension/manifest.json` (host_permissions, content_scripts.matches), rebuild + redeploy
 - **Note:** Permission escalation after Chrome Web Store deployment triggers re-approval prompt for users
+
+### Runtime Integration and Voice Recovery
+- `[2026-03-14] [FIX] [EXT] — Added offscreen → service worker message support for VOICE_STATUS and VOICE_TRANSCRIPT in shared message types, message validator, and service-worker forwarding`
+- `[2026-03-14] [FIX] [EXT] — Added microphone permission support in extension manifest and introduced explicit mic-permission recovery UX`
+- `[2026-03-14] [FIX] [EXT] — Added dedicated mic permission helper page (src/mic-permission/mic-permission.html/.ts) and packaged it in the Vite build so blocked side-panel permission requests can recover in a normal extension page`
+- `[2026-03-14] [FIX] [VOICE] — Switched primary speech runtime from offscreen SpeechRecognition to visible side-panel SpeechRecognition; retained offscreen path only as fallback for unsupported contexts`
+- `[2026-03-14] [FIX] [VOICE] — Confirmed new runtime bundle loaded in Chrome (sidepanel-DNC_NlaL.js) and eliminated the previous repeated offscreen not-allowed loop`
+- `[2026-03-14] [FIX] [EXT] — Set Vite base to relative paths so offscreen and sidepanel HTML load bundled assets correctly in Chrome extension context`
+- `[2026-03-14] [FIX] [HISTORY] — Reworked History screen to fetch real MCP bridge prompt data, refresh from bridge state, and show live queued/delivered counts`
+- `[2026-03-14] [FIX] [MCP] — Added Windsurf/Cascade-compatible MCP stdio server (mcp-bridge/src/mcp-stdio-server.ts) and bridge delivery endpoints so U:Echo prompts can be retrieved through MCP tools instead of a pseudo bridge only`
+- `[2026-03-14] [DECISION] [MCP] — Clarified current handoff semantics: extension action queues prompts into the local U:Echo bridge for MCP retrieval; it does not inject prompts directly into an existing Windsurf chat thread`
+- `[2026-03-14] [FIX] [TEST] — Added Playwright B6 mic transcription coverage using mocked side-panel SpeechRecognition to validate real transcript plumbing, not just click-without-crash behavior`
+- `[2026-03-14] [FIX] [TEST] — Updated stale extension unit assertions to match current 1px grid behavior (DEFAULT_GRID_CELL_SIZE and overlay backgroundSize)`
+- `[2026-03-14] [FIX] [BACKEND] — Replaced synchronous LLM calls with async (await model.generate_content_async) in enhance_text and generate_prompt routes to prevent event loop blocking`
+- `[2026-03-14] [FIX] [BACKEND] — Fixed generate_prompt fallback response to return status="fallback" with explicit verification=None for consistent client handling`
+- `[2026-03-14] [FIX] [EXT] — Fixed offscreen document creation guard in ensureOffscreenDocument to reset offscreenCreating to null in finally block, preventing permanently rejected promise leaks`
+- `[2026-03-14] [FIX] [EXT] — Added ensureOffscreenDocument() guard to SP_VOICE_STOP handler to match SP_VOICE_START pattern, preventing messages to non-existent offscreen doc`
+- `[2026-03-14] [FIX] [EXT] — Removed invalid "microphone" permission from manifest.json (Chrome MV3 doesn't support it; mic access handled via getUserMedia at runtime)`
+- `[2026-03-14] [FIX] [EXT] — Removed overly-broad "<all_urls>" from host_permissions, scoped to localhost only with activeTab for temporary access`
+- `[2026-03-14] [FIX] [EXT] — Added AbortController to HistoryScreen fetchHistory to prevent state updates after unmount`
+- `[2026-03-14] [FIX] [EXT] — Added loading state display in HistoryScreen when prompts.length === 0 && isLoading`
+- `[2026-03-14] [FIX] [EXT] — Fixed App.tsx pushStatus timeout leak with useRef cleanup and race prevention`
+- `[2026-03-14] [FIX] [EXT] — Disabled VerifyScreen push button during 'success' state to prevent duplicate submissions`
+- `[2026-03-14] [FIX] [EXT] — Added error handling to useChatStore chrome.storage.local.get with .catch/.finally ensuring isLoadedRef always set`
+- `[2026-03-14] [FIX] [MCP] — Fixed mcp-stdio-server.ts deliver endpoint: corrected comment (POST not PATCH), checked response, gated "marked as delivered" message on success`
+- `[2026-03-14] [FIX] [MCP] — Fixed server.ts fail endpoint to use normalized finalError in markFailed, log, and broadcastSSE for consistency`
+- `[2026-03-14] [FIX] [TEST] — Fixed offscreen.html corruption from accidental paste, verified Vite handles .ts references correctly`
+- `[2026-03-14] [FIX] [TEST] — Strengthened E2E MCP bridge queue assertion to always verify request success with expect(queueRes.ok()).toBeTruthy()`
+- `[2026-03-14] [INFO] [DOCS] — Added Permissions & Site Access section to README.md documenting activeTab, host_permissions, and expansion strategies`
+- `[2026-03-14] [FIX] [TEST] — Updated E2E generate-prompt assertion to accept all valid statuses (success|needs_review|error|fallback)`
+- `[2026-03-14] [BUG] [EXT] — BACKEND_URL hardcoded to port 8000 in service-worker.ts and E2E spec; backend runs on 8080 → fixed both to localhost:8080`
+- `[2026-03-14] [BUG] [EXT] — chrome.tabs.captureVisibleTab failed with "activeTab permission required" because gesture-triggered screenshots fire asynchronously after activeTab grant expires → restored <all_urls> in host_permissions`
+- `[2026-03-14] [FIX] [DOCS] — Updated README Permissions section to document why <all_urls> is required for captureVisibleTab`
+- `[2026-03-14] [FIX] [EXT] — Fixed HistoryScreen onClick={fetchHistory} type error — wrapped in arrow function to avoid passing MouseEvent as AbortSignal`
+- `[2026-03-14] [INFO] [TEST] — Final full suite run: Extension Jest 111/111, MCP Bridge Jest 34/34, Backend pytest 87/87, Playwright E2E 33 passed/3 skipped`
+- `[2026-03-14] [INFO] [TEST] — Aggregate: 265 tests, 0 failures, 3 skipped (overlay injection in test env)`

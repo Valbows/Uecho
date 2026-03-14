@@ -1,5 +1,18 @@
-import React, { useState } from 'react';
-import type { RequestRecord } from '@shared/types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { MCP_BRIDGE_URL } from '@shared/constants';
+
+/** Shape returned by the MCP bridge GET /prompts endpoint */
+interface BridgePrompt {
+  prompt_id: string;
+  ide_target: string;
+  feature_name: string;
+  selector: string;
+  action_type: string;
+  status: 'queued' | 'delivered' | 'failed';
+  created_at: string;
+  updated_at: string;
+  error?: string;
+}
 
 interface HistoryScreenProps {
   onExportCsv: () => void;
@@ -7,58 +20,42 @@ interface HistoryScreenProps {
 
 const HistoryScreen: React.FC<HistoryScreenProps> = ({ onExportCsv }) => {
   const [selectedRequest, setSelectedRequest] = useState<string | null>(null);
+  const [prompts, setPrompts] = useState<BridgePrompt[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Placeholder data — will be replaced with Firestore data in Phase 5
+  /** Fetch real prompt history from the MCP bridge */
+  const fetchHistory = useCallback(async (signal?: AbortSignal) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${MCP_BRIDGE_URL}/prompts?limit=50`, { signal });
+      if (!res.ok) throw new Error(`Bridge returned ${res.status}`);
+      const data = await res.json();
+      setPrompts(data.prompts ?? []);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setError(err instanceof Error ? err.message : 'Failed to reach MCP bridge');
+      setPrompts([]);
+    } finally {
+      if (!signal?.aborted) setIsLoading(false);
+    }
+  }, []);
+
+  // Load on mount; abort in-flight request on unmount
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchHistory(controller.signal);
+    return () => controller.abort();
+  }, [fetchHistory]);
+
   const stats = {
-    requestsToday: 12,
-    verified: 10,
-    avgTurnaround: '2m',
+    total: prompts.length,
+    delivered: prompts.filter((p) => p.status === 'delivered').length,
+    queued: prompts.filter((p) => p.status === 'queued').length,
   };
 
-  const requests: RequestRecord[] = [
-    {
-      request_id: 'req-1',
-      session_id: 'sess-1',
-      action_type: 'resize',
-      selector: '#submit-order-btn',
-      interpreted_intent: 'Purchase Conversion',
-      status: 'verified',
-      created_at: Date.now() - 3600000,
-      updated_at: Date.now() - 3500000,
-    },
-    {
-      request_id: 'req-2',
-      session_id: 'sess-1',
-      action_type: 'color',
-      selector: '.nav-item--active',
-      interpreted_intent: 'Navigation Highlight',
-      status: 'sent',
-      created_at: Date.now() - 7200000,
-      updated_at: Date.now() - 7100000,
-    },
-    {
-      request_id: 'req-3',
-      session_id: 'sess-1',
-      action_type: 'text',
-      selector: 'input[name="search"]',
-      interpreted_intent: 'Search Placeholder',
-      status: 'processing',
-      created_at: Date.now() - 10800000,
-      updated_at: Date.now() - 10800000,
-    },
-    {
-      request_id: 'req-4',
-      session_id: 'sess-1',
-      action_type: 'move',
-      selector: '.price-toggle-btn',
-      interpreted_intent: 'Pricing Toggle Reposition',
-      status: 'pending',
-      created_at: Date.now() - 14400000,
-      updated_at: Date.now() - 14400000,
-    },
-  ];
-
-  const selected = requests.find((r) => r.request_id === selectedRequest);
+  const selected = prompts.find((p) => p.prompt_id === selectedRequest);
 
   return (
     <div className="flex flex-col h-full">
@@ -70,67 +67,113 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onExportCsv }) => {
               Activity Logs
             </h2>
             <p className="text-[11px] text-echo-text-secondary mt-0.5">
-              Audit-ready history of all selector requests.
+              Real-time prompt history from MCP bridge.
             </p>
           </div>
-          <button
-            onClick={onExportCsv}
-            className="px-3 py-1.5 text-[11px] font-medium text-primary bg-primary/10 rounded-md
-              hover:bg-primary/15 transition-colors"
-          >
-            Export CSV
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => fetchHistory()}
+              disabled={isLoading}
+              title="Refresh history"
+              className="w-7 h-7 flex items-center justify-center rounded-md border border-echo-border
+                text-echo-text-muted hover:text-primary hover:border-primary/30 transition-colors
+                disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                className={isLoading ? 'animate-spin' : ''}>
+                <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+                <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                <path d="M16 21h5v-5" />
+              </svg>
+            </button>
+            <button
+              onClick={onExportCsv}
+              className="px-3 py-1.5 text-[11px] font-medium text-primary bg-primary/10 rounded-md
+                hover:bg-primary/15 transition-colors"
+            >
+              Export CSV
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* Error Banner */}
+      {error && (
+        <div className="mb-3 px-3 py-2 bg-echo-error/10 border border-echo-error/20 rounded-lg">
+          <p className="text-[11px] text-echo-error">{error}</p>
+        </div>
+      )}
+
       {/* Stats Cards */}
       <div className="grid grid-cols-3 gap-2 mb-4">
-        <StatCard label="Requests Today" value={String(stats.requestsToday)} />
-        <StatCard label="Verified" value={String(stats.verified)} color="success" />
-        <StatCard label="Avg Turnaround" value={stats.avgTurnaround} />
+        <StatCard label="Total" value={String(stats.total)} />
+        <StatCard label="Delivered" value={String(stats.delivered)} color="success" />
+        <StatCard label="Queued" value={String(stats.queued)} />
       </div>
 
-      {/* Request List */}
+      {/* Prompt List */}
       <div className="flex-1 overflow-y-auto space-y-1.5">
-        {requests.map((req) => (
-          <RequestRow
-            key={req.request_id}
-            request={req}
-            isSelected={selectedRequest === req.request_id}
+        {isLoading && prompts.length === 0 && (
+          <div className="text-center py-8 text-echo-text-muted text-xs">
+            Loading…
+          </div>
+        )}
+        {prompts.length === 0 && !isLoading && !error && (
+          <div className="text-center py-8 text-echo-text-muted text-xs">
+            No prompts yet. Push a design change from the Agent tab.
+          </div>
+        )}
+        {prompts.map((p) => (
+          <PromptRow
+            key={p.prompt_id}
+            prompt={p}
+            isSelected={selectedRequest === p.prompt_id}
             onClick={() =>
               setSelectedRequest(
-                selectedRequest === req.request_id ? null : req.request_id
+                selectedRequest === p.prompt_id ? null : p.prompt_id
               )
             }
           />
         ))}
       </div>
 
-      {/* Request Detail Panel */}
+      {/* Prompt Detail Panel */}
       {selected && (
         <div className="border-t border-echo-border pt-3 mt-3">
           <h3 className="text-xs font-medium text-echo-text-muted uppercase tracking-wider mb-2">
-            Request Details
+            Prompt Details
           </h3>
           <div className="space-y-2">
+            <DetailRow label="Feature">
+              <span className="text-xs text-echo-text">
+                {selected.feature_name}
+              </span>
+            </DetailRow>
             <DetailRow label="Selector">
               <code className="text-[11px] font-mono text-primary bg-echo-code-bg px-1.5 py-0.5 rounded">
                 {selected.selector}
               </code>
-            </DetailRow>
-            <DetailRow label="Intent">
-              <span className="text-xs text-echo-text">
-                {selected.interpreted_intent}
-              </span>
             </DetailRow>
             <DetailRow label="Action">
               <span className="text-xs text-echo-text capitalize">
                 {selected.action_type}
               </span>
             </DetailRow>
+            <DetailRow label="IDE Target">
+              <span className="text-xs text-echo-text capitalize">
+                {selected.ide_target}
+              </span>
+            </DetailRow>
             <DetailRow label="Status">
               <StatusBadge status={selected.status} />
             </DetailRow>
+            {selected.error && (
+              <DetailRow label="Error">
+                <span className="text-xs text-echo-error">{selected.error}</span>
+              </DetailRow>
+            )}
 
             {/* Timeline */}
             <div className="mt-3">
@@ -139,21 +182,18 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onExportCsv }) => {
               </h4>
               <div className="space-y-2 pl-3 border-l-2 border-echo-border">
                 <TimelineEntry
-                  label="Request Received"
+                  label="Queued"
                   time={new Date(selected.created_at).toLocaleString()}
                 />
-                {selected.status !== 'pending' && (
+                {selected.status === 'delivered' && (
                   <TimelineEntry
-                    label="Processing Started"
-                    time={new Date(
-                      selected.created_at + 13000
-                    ).toLocaleString()}
+                    label="Delivered to IDE"
+                    time={new Date(selected.updated_at).toLocaleString()}
                   />
                 )}
-                {(selected.status === 'verified' ||
-                  selected.status === 'sent') && (
+                {selected.status === 'failed' && (
                   <TimelineEntry
-                    label="Verified & Logged"
+                    label="Failed"
                     time={new Date(selected.updated_at).toLocaleString()}
                   />
                 )}
@@ -166,7 +206,9 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onExportCsv }) => {
       {/* Footer */}
       <div className="text-center pt-2 mt-2 border-t border-echo-border">
         <span className="text-[10px] text-echo-text-muted">
-          Showing 1-{requests.length} of {requests.length} requests
+          {prompts.length > 0
+            ? `Showing ${prompts.length} prompt${prompts.length !== 1 ? 's' : ''}`
+            : 'No prompts'}
         </span>
       </div>
     </div>
@@ -190,11 +232,11 @@ const StatCard: React.FC<{
   </div>
 );
 
-const RequestRow: React.FC<{
-  request: RequestRecord;
+const PromptRow: React.FC<{
+  prompt: BridgePrompt;
   isSelected: boolean;
   onClick: () => void;
-}> = ({ request, isSelected, onClick }) => (
+}> = ({ prompt, isSelected, onClick }) => (
   <button
     onClick={onClick}
     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-all ${
@@ -203,28 +245,29 @@ const RequestRow: React.FC<{
         : 'bg-echo-surface border-echo-border hover:border-primary/15'
     }`}
   >
-    <div className="flex items-center gap-2.5 min-w-0">
+    <div className="flex flex-col gap-0.5 min-w-0">
+      <span className="text-[11px] font-medium text-echo-text truncate">
+        {prompt.feature_name}
+      </span>
       <code className="text-[10px] font-mono text-primary bg-echo-code-bg px-1.5 py-0.5 rounded truncate max-w-[160px]">
-        {request.selector}
+        {prompt.selector}
       </code>
     </div>
-    <StatusBadge status={request.status} />
+    <StatusBadge status={prompt.status} />
   </button>
 );
 
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const styles: Record<string, string> = {
-    pending: 'bg-echo-text-muted/10 text-echo-text-muted',
-    processing: 'bg-echo-warning/10 text-echo-warning',
-    verified: 'bg-echo-success/10 text-echo-success',
-    sent: 'bg-primary/10 text-primary',
+    queued: 'bg-echo-warning/10 text-echo-warning',
+    delivered: 'bg-echo-success/10 text-echo-success',
     failed: 'bg-echo-error/10 text-echo-error',
   };
 
   return (
     <span
       className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap ${
-        styles[status] || styles.pending
+        styles[status] || 'bg-echo-text-muted/10 text-echo-text-muted'
       }`}
     >
       {status}

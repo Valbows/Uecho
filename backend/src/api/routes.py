@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from .models import (
     BoundingBox,
@@ -128,14 +129,152 @@ async def process_gesture(request: Request, payload: MetadataPayload):
 async def enhance_text(request: Request, body: TextEnhanceRequest):
     """Use LLM to enhance user's natural language description."""
     try:
-        # TODO: Phase 5 — use Gemini to enhance text
+        import google.generativeai as genai
+        
+        api_key = os.getenv('GEMINI_API_KEY')
+        model_name = os.getenv('GEMINI_MODEL', 'gemini-3.1-flash-lite-preview')
+        
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY not configured")
+        
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        
+        prompt = f"""You are a UI/UX design assistant. The user has described a UI change they want to make:
+
+"{body.text}"
+
+Your task:
+1. Clarify and enhance their description to be more specific and actionable
+2. Identify the key UI elements involved
+3. Suggest any accessibility or usability improvements
+
+Respond with a concise, enhanced version of their request (2-3 sentences max) that a developer could act on immediately."""
+        
+        response = await model.generate_content_async(prompt)
+        enhanced = response.text.strip() if response.text else body.text
+        
+        return {
+            "enhanced_text": enhanced,
+            "suggestions": [],
+        }
+    except Exception as e:
+        logger.warning("enhance_text LLM failed, returning original text: %s", e)
         return {
             "enhanced_text": body.text,
             "suggestions": [],
         }
+
+
+# ─── Generate Prompt from Text ───────────────────────────────────
+class GeneratePromptRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000)
+    selector: str = Field(default="body", max_length=500)
+    page_url: str = Field(default="", max_length=2000)
+    action_type: str = Field(default="modify", max_length=50)
+
+
+@app.post("/api/generate-prompt", response_model=AgentResponse)
+@limiter.limit("20/minute")
+async def generate_prompt(request: Request, body: GeneratePromptRequest):
+    """
+    Generate a structured PromptSchema from a natural language description.
+    Uses Gemini LLM to interpret the user's intent and build an actionable prompt.
+    """
+    try:
+        import google.generativeai as genai
+        import json as _json
+
+        api_key = os.getenv("GEMINI_API_KEY")
+        model_name = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
+
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY not configured")
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+
+        llm_prompt = f"""You are a UI/UX engineering assistant. Given a user's natural language description of a UI change, generate a structured JSON prompt that a developer can act on.
+
+User's request: "{body.text}"
+Target selector: "{body.selector}"
+Page URL: "{body.page_url}"
+Action type hint: "{body.action_type}"
+
+Respond ONLY with valid JSON (no markdown, no explanation) matching this schema:
+{{
+  "feature_name": "short name for the change (3-5 words)",
+  "visual_change_description": "detailed description of the visual change",
+  "action_type": "one of: resize, move, color, text, layout, style, modify",
+  "prompt_text": "A clear, developer-ready instruction paragraph describing exactly what to change and how"
+}}"""
+
+        response = await model.generate_content_async(llm_prompt)
+        raw = response.text.strip() if response.text else ""
+
+        # Parse LLM JSON response
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+            if raw.endswith("```"):
+                raw = raw[:-3].strip()
+
+        try:
+            parsed = _json.loads(raw)
+        except _json.JSONDecodeError:
+            parsed = {
+                "feature_name": "UI Change",
+                "visual_change_description": body.text,
+                "action_type": body.action_type,
+                "prompt_text": body.text,
+            }
+
+        prompt = PromptSchema(
+            feature_name=parsed.get("feature_name", "UI Change"),
+            selector=body.selector,
+            action_type=parsed.get("action_type", body.action_type),
+            current_dimensions=BoundingBox(x=0, y=0, width=0, height=0),
+            target_dimensions=BoundingBox(x=0, y=0, width=0, height=0),
+            visual_change_description=parsed.get("visual_change_description", body.text),
+            tab_url=body.page_url,
+            prompt_text=parsed.get("prompt_text", body.text),
+            extension_session_id="",
+        )
+
+        verification = verify_prompt(prompt, body.text)
+
+        status = "success"
+        if not verification.schema_valid or not verification.safety_passed:
+            status = "error"
+        elif verification.drift_warning:
+            status = "needs_review"
+
+        return AgentResponse(
+            interpreted_intent=body.text,
+            prompt=prompt,
+            verification=verification,
+            status=status,
+        )
     except Exception as e:
-        logger.exception("enhance_text failed")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.warning("generate_prompt failed, returning basic prompt: %s", e)
+        # Graceful fallback: return a basic prompt without LLM
+        prompt = PromptSchema(
+            feature_name="UI Change",
+            selector=body.selector,
+            action_type=body.action_type,
+            current_dimensions=BoundingBox(x=0, y=0, width=0, height=0),
+            target_dimensions=BoundingBox(x=0, y=0, width=0, height=0),
+            visual_change_description=body.text,
+            tab_url=body.page_url,
+            prompt_text=body.text,
+            extension_session_id="",
+        )
+        return AgentResponse(
+            interpreted_intent=body.text,
+            prompt=prompt,
+            verification=None,
+            status="fallback",
+        )
 
 
 # ─── Upload Screenshot ───────────────────────────────────────────

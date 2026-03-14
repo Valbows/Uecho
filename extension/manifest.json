@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "permissions": [
     "activeTab",
+    "offscreen",
     "scripting",
     "sidePanel",
     "storage",
@@ -12,7 +13,8 @@
   ],
   "host_permissions": [
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "src/background/service-worker.ts",

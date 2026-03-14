@@ -181,6 +181,32 @@ app.get('/prompts/:id', authMiddleware, (req: express.Request<{ id: string }>, r
   res.json(entry);
 });
 
+// ─── Mark Delivered ─────────────────────────────────────────────
+app.post('/prompts/:id/deliver', authMiddleware, (req: express.Request<{ id: string }>, res) => {
+  const entry = markDelivered(req.params.id);
+  if (!entry) {
+    res.status(404).json({ error: 'Prompt not found' });
+    return;
+  }
+  console.log(`[MCP Bridge] Prompt ${req.params.id} marked as delivered`);
+  broadcastSSE('prompt_delivered', { prompt_id: req.params.id });
+  res.json({ ok: true, prompt_id: entry.prompt_id, status: entry.status });
+});
+
+// ─── Mark Failed ────────────────────────────────────────────────
+app.post('/prompts/:id/fail', authMiddleware, (req: express.Request<{ id: string }>, res) => {
+  const { error: errorMsg } = req.body as { error?: string };
+  const finalError = errorMsg || 'Unknown failure';
+  const entry = markFailed(req.params.id, finalError);
+  if (!entry) {
+    res.status(404).json({ error: 'Prompt not found' });
+    return;
+  }
+  console.log(`[MCP Bridge] Prompt ${req.params.id} marked as failed: ${finalError}`);
+  broadcastSSE('prompt_failed', { prompt_id: req.params.id, error: finalError });
+  res.json({ ok: true, prompt_id: entry.prompt_id, status: entry.status });
+});
+
 // ─── Export for testing ──────────────────────────────────────────
 export { app, PORT, TOKEN };
 

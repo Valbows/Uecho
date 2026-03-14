@@ -33,7 +33,7 @@ describe('Shared Constants', () => {
   describe('Default Settings', () => {
     it('should have a positive grid cell size', () => {
       expect(DEFAULT_GRID_CELL_SIZE).toBeGreaterThan(0);
-      expect(DEFAULT_GRID_CELL_SIZE).toBe(25);
+      expect(DEFAULT_GRID_CELL_SIZE).toBe(1);
     });
 
     it('should default overlay mode to off', () => {

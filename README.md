@@ -80,6 +80,60 @@ npm install
 npm run dev
 ```
 
+## Permissions & Site Access
+
+U:Echo uses a **minimal-permission model** aligned with Chrome Manifest V3 best practices.
+
+### Host Permissions (manifest)
+
+The extension ships with these `host_permissions`:
+
+```json
+"host_permissions": [
+  "http://localhost/*",
+  "http://127.0.0.1/*",
+  "<all_urls>"
+]
+```
+
+- **`http://localhost/*`** and **`http://127.0.0.1/*`** — content script injection and backend/bridge communication.
+- **`<all_urls>`** — required for `chrome.tabs.captureVisibleTab` (screenshot capture during gesture processing). The `activeTab` permission alone is insufficient because screenshot capture is triggered asynchronously by content script events, not by direct user clicks on the extension icon.
+
+### `activeTab` — Temporary Tab Access
+
+The `activeTab` permission grants the extension **temporary** access to the currently active tab when the user clicks the extension's toolbar icon. This enables:
+
+- **`chrome.scripting.executeScript`** — programmatic content script injection on any site
+- **`chrome.tabs.captureVisibleTab`** — screenshot capture of the visible tab
+- **`chrome.scripting.insertCSS`** — overlay stylesheet injection
+
+Access is automatically revoked when the tab navigates to a new origin or is closed. No persistent broad host permission is needed.
+
+### Expanding to Other Sites
+
+To use U:Echo on non-localhost sites (e.g., staging or production URLs):
+
+1. **Add explicit origins** to both `host_permissions` and `content_scripts.matches` in `manifest.json`:
+   ```json
+   "host_permissions": [
+     "http://localhost/*",
+     "http://127.0.0.1/*",
+     "https://staging.example.com/*"
+   ]
+   ```
+2. **Or use on-demand permissions** via the Chrome optional permissions API (avoids re-approval prompts for existing users):
+   ```ts
+   const granted = await chrome.permissions.request({
+     origins: ['https://example.com/*'],
+   });
+   ```
+
+> **Note:** Changing `host_permissions` after Chrome Web Store publication triggers a re-approval prompt for all existing users. Prefer optional permissions for gradual rollout.
+
+### Microphone Access
+
+Mic access for voice input is handled at runtime via `navigator.mediaDevices.getUserMedia()` in the side panel — no manifest permission is needed. If the browser blocks the prompt, a helper page (`src/mic-permission/mic-permission.html`) opens in a new tab to recover the permission grant.
+
 ## Google Cloud Project
 - **Project ID:** `user-echo-ui-navigator`
 - **Project Number:** `11807439487`

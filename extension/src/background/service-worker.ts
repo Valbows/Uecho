@@ -7,6 +7,7 @@
 import type {
   ContentScriptMessage,
   SidePanelMessage,
+  OffscreenMessage,
 } from '@shared/messages';
 import type { ConnectivityStatus, ElementInfo } from '@shared/types';
 import { STORAGE_KEYS, API_ENDPOINTS } from '@shared/constants';
@@ -21,7 +22,7 @@ import {
   sanitizeString,
 } from './message-validator';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = 'http://localhost:8080';
 const MCP_BRIDGE_URL = 'http://localhost:3939';
 
 // ─── Module Instances ───────────────────────────────────────────
@@ -38,7 +39,7 @@ requestQueue.setUpdateCallback((request) => {
     chrome.runtime.sendMessage({
       type: 'SW_AGENT_RESPONSE',
       payload: request.response,
-    });
+    }).catch(() => {});
 
     if (request.response.interpreted_intent) {
       chrome.runtime.sendMessage({
@@ -47,7 +48,7 @@ requestQueue.setUpdateCallback((request) => {
           intent_text: request.response.interpreted_intent,
           gesture: request.metadata.gesture,
         },
-      });
+      }).catch(() => {});
     }
   } else if (request.status === 'failed') {
     tabRecorder?.dispatch({ type: 'ERROR', message: request.error || 'Unknown error' });
@@ -62,7 +63,7 @@ chrome.sidePanel
 // ─── Message Router ─────────────────────────────────────────────
 chrome.runtime.onMessage.addListener(
   (
-    message: ContentScriptMessage | SidePanelMessage,
+    message: ContentScriptMessage | SidePanelMessage | OffscreenMessage,
     sender,
     sendResponse
   ) => {
@@ -72,7 +73,7 @@ chrome.runtime.onMessage.addListener(
 );
 
 async function handleMessage(
-  message: ContentScriptMessage | SidePanelMessage,
+  message: ContentScriptMessage | SidePanelMessage | OffscreenMessage,
   sender: chrome.runtime.MessageSender,
   sendResponse: (response: unknown) => void
 ): Promise<void> {
@@ -165,15 +166,45 @@ async function handleMessage(
             pageUrl: tab.url || '',
           });
 
-          chrome.tabs.sendMessage(tab.id, {
-            type: 'SW_ACTIVATE_OVERLAY',
-            payload: { mode: message.payload.mode },
-          });
+          // Try to send message to content script; if it fails, inject programmatically
+          try {
+            await chrome.tabs.sendMessage(tab.id, {
+              type: 'SW_ACTIVATE_OVERLAY',
+              payload: { mode: message.payload.mode },
+            });
+          } catch (error) {
+            // Content script not loaded; inject it programmatically
+            try {
+              const manifest = chrome.runtime.getManifest();
+              const csEntry = manifest.content_scripts?.[0];
+              const jsFiles = csEntry?.js || [];
+              const cssFiles = csEntry?.css || [];
+              if (jsFiles.length > 0) {
+                await chrome.scripting.executeScript({
+                  target: { tabId: tab.id },
+                  files: jsFiles,
+                });
+              }
+              if (cssFiles.length > 0) {
+                await chrome.scripting.insertCSS({
+                  target: { tabId: tab.id },
+                  files: cssFiles,
+                });
+              }
+              // Retry the message after injection
+              await chrome.tabs.sendMessage(tab.id, {
+                type: 'SW_ACTIVATE_OVERLAY',
+                payload: { mode: message.payload.mode },
+              });
+            } catch (injectionError) {
+              console.error('[U:Echo SW] Failed to inject content script:', injectionError);
+            }
+          }
 
           chrome.runtime.sendMessage({
             type: 'SW_SESSION_UPDATE',
             payload: session,
-          });
+          }).catch(() => {});
         }
         sendResponse({ ok: true });
         break;
@@ -187,7 +218,7 @@ async function handleMessage(
         if (tab?.id) {
           chrome.tabs.sendMessage(tab.id, {
             type: 'SW_DEACTIVATE_OVERLAY',
-          });
+          }).catch(() => {});
         }
         await sessionManager.updateMode('off');
         await sessionManager.setAgentActive(false);
@@ -205,9 +236,57 @@ async function handleMessage(
           sendResponse({ ok: false, error: submitCheck.error });
           break;
         }
-        // Forward text to enhance endpoint
+        // Generate a structured prompt from the user's text
         try {
-          const enhanceRes = await fetch(
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          const promptRes = await fetch(
+            `${BACKEND_URL}${API_ENDPOINTS.generatePrompt}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                text: sanitizeString(message.payload.text),
+                page_url: tab?.url || '',
+                selector: (message.payload.metadata as Record<string, unknown>)?.selector || 'body',
+                action_type: (message.payload.metadata as Record<string, unknown>)?.action_type || 'modify',
+              }),
+            }
+          );
+          if (!promptRes.ok) {
+            const errorBody = await promptRes.text();
+            sendResponse({ ok: false, status: promptRes.status, error: errorBody });
+            break;
+          }
+          const agentResponse = await promptRes.json();
+          sendResponse({ ok: true, ...agentResponse });
+          // Notify side panel with the full AgentResponse (includes prompt + verification)
+          chrome.runtime.sendMessage({
+            type: 'SW_AGENT_RESPONSE',
+            payload: agentResponse,
+          }).catch(() => {});
+        } catch (error) {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          sendResponse({ ok: false, error: errMsg });
+          chrome.runtime.sendMessage({
+            type: 'SW_AGENT_RESPONSE',
+            payload: {
+              interpreted_intent: '',
+              status: 'error',
+              error_message: errMsg,
+            },
+          }).catch(() => {});
+        }
+        break;
+      }
+
+      case 'SP_ENHANCE_TEXT': {
+        const enhanceCheck = validateSubmitText(message.payload);
+        if (!enhanceCheck.valid) {
+          sendResponse({ ok: false, error: enhanceCheck.error });
+          break;
+        }
+        try {
+          const enhRes = await fetch(
             `${BACKEND_URL}${API_ENDPOINTS.enhanceText}`,
             {
               method: 'POST',
@@ -218,13 +297,12 @@ async function handleMessage(
               }),
             }
           );
-          if (!enhanceRes.ok) {
-            const errorBody = await enhanceRes.text();
-            sendResponse({ ok: false, status: enhanceRes.status, error: errorBody });
+          if (!enhRes.ok) {
+            sendResponse({ ok: false, error: await enhRes.text() });
             break;
           }
-          const enhanced = await enhanceRes.json();
-          sendResponse({ ok: true, ...enhanced });
+          const result = await enhRes.json();
+          sendResponse({ ok: true, ...result });
         } catch (error) {
           sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
         }
@@ -236,7 +314,7 @@ async function handleMessage(
         chrome.runtime.sendMessage({
           type: 'SW_CONNECTIVITY_UPDATE',
           payload: status,
-        });
+        }).catch(() => {});
         sendResponse(status);
         break;
       }
@@ -269,6 +347,68 @@ async function handleMessage(
           sendResponse({ ok: false, error: String(error) });
         }
         break;
+      }
+
+      case 'SP_VOICE_START': {
+        try {
+          console.log('[U:Echo SW] Voice start requested');
+          await ensureOffscreenDocument();
+          console.log('[U:Echo SW] Offscreen document ready, sending VOICE_START');
+          chrome.runtime.sendMessage({
+            target: 'offscreen-voice',
+            type: 'VOICE_START',
+            lang: message.payload?.lang || 'en-US',
+            interimResults: message.payload?.interimResults ?? true,
+          }).catch((err) => console.warn('[U:Echo SW] VOICE_START relay failed:', err));
+          sendResponse({ ok: true });
+        } catch (error) {
+          console.error('[U:Echo SW] Voice start error:', error);
+          sendResponse({ ok: false, error: String(error) });
+        }
+        break;
+      }
+
+      case 'SP_VOICE_STOP': {
+        try {
+          console.log('[U:Echo SW] Voice stop requested');
+          await ensureOffscreenDocument();
+          chrome.runtime.sendMessage({
+            target: 'offscreen-voice',
+            type: 'VOICE_STOP',
+          }).catch((err) => console.warn('[U:Echo SW] VOICE_STOP relay failed:', err));
+          sendResponse({ ok: true });
+        } catch (error) {
+          console.error('[U:Echo SW] Voice stop error:', error);
+          sendResponse({ ok: false, error: String(error) });
+        }
+        break;
+      }
+
+      case 'SP_VOICE_CHECK_SUPPORT': {
+        try {
+          console.log('[U:Echo SW] Checking voice support...');
+          await ensureOffscreenDocument();
+          console.log('[U:Echo SW] Offscreen document created, waiting for init...');
+          // Give offscreen doc a moment to initialize
+          await new Promise((r) => setTimeout(r, 300));
+          chrome.runtime.sendMessage({
+            target: 'offscreen-voice',
+            type: 'VOICE_CHECK_SUPPORT',
+          }, (response) => {
+            const supported = response?.supported ?? false;
+            console.log('[U:Echo SW] Voice support check result:', supported, response);
+            if (chrome.runtime.lastError) {
+              console.warn('[U:Echo SW] Voice support check error:', chrome.runtime.lastError);
+              sendResponse({ ok: true, supported: false });
+              return;
+            }
+            sendResponse({ ok: true, supported });
+          });
+        } catch (error) {
+          console.error('[U:Echo SW] Voice support check failed:', error);
+          sendResponse({ ok: true, supported: false });
+        }
+        return; // sendResponse called in callback
       }
 
       case 'SP_UPDATE_SETTINGS': {
@@ -311,6 +451,15 @@ async function handleMessage(
         break;
       }
 
+      // ─── From Offscreen Document (voice) ─────────────────
+      case 'VOICE_STATUS':
+      case 'VOICE_TRANSCRIPT': {
+        // Forward offscreen voice messages to side panel as-is
+        chrome.runtime.sendMessage(message).catch(() => {});
+        sendResponse({ ok: true });
+        break;
+      }
+
       default:
         console.warn('[U:Echo SW] Unknown message type:', (message as { type: string }).type);
         sendResponse({ ok: false, error: 'Unknown message type' });
@@ -322,6 +471,32 @@ async function handleMessage(
       recorders.get(errorTabId)?.dispatch({ type: 'ERROR', message: String(error) });
     }
     sendResponse({ ok: false, error: String(error) });
+  }
+}
+
+// ─── Offscreen Voice Document Management ────────────────────────
+let offscreenCreating: Promise<void> | null = null;
+
+async function ensureOffscreenDocument(): Promise<void> {
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
+  });
+  if (existingContexts.length > 0) return;
+
+  if (offscreenCreating) {
+    await offscreenCreating;
+    return;
+  }
+
+  offscreenCreating = chrome.offscreen.createDocument({
+    url: 'src/offscreen/offscreen.html',
+    reasons: [chrome.offscreen.Reason.USER_MEDIA],
+    justification: 'Speech recognition requires access to the Web Speech API which is unavailable in extension pages.',
+  });
+  try {
+    await offscreenCreating;
+  } finally {
+    offscreenCreating = null;
   }
 }
 

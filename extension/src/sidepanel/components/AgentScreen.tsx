@@ -61,6 +61,18 @@ const AgentScreen: React.FC<AgentScreenProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={chat.clearMessages}
+            title="Clear chat history"
+            className="w-6 h-6 flex items-center justify-center rounded-md border border-echo-border
+              text-echo-text-muted hover:text-echo-error hover:border-echo-error/30 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+            </svg>
+          </button>
           {voice.status === 'listening' && (
             <div className="flex items-center gap-1.5 px-2 py-1 bg-echo-error/10 rounded-full">
               <div className="w-1.5 h-1.5 rounded-full bg-echo-error animate-pulse" />

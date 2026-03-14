@@ -119,6 +119,34 @@ export interface SPExportCSVMessage {
   payload: { session_id?: string };
 }
 
+export interface SPVoiceStartMessage {
+  type: 'SP_VOICE_START';
+  payload: { lang?: string; interimResults?: boolean };
+}
+
+export interface SPVoiceStopMessage {
+  type: 'SP_VOICE_STOP';
+}
+
+export interface SPVoiceCheckSupportMessage {
+  type: 'SP_VOICE_CHECK_SUPPORT';
+}
+
+// ─── Offscreen → Service Worker Messages ────────────────────────
+export interface VoiceStatusMessage {
+  type: 'VOICE_STATUS';
+  status: 'listening' | 'idle' | 'error';
+  error?: string;
+}
+
+export interface VoiceTranscriptMessage {
+  type: 'VOICE_TRANSCRIPT';
+  text: string;
+  isFinal: boolean;
+}
+
+export type OffscreenMessage = VoiceStatusMessage | VoiceTranscriptMessage;
+
 // ─── Union Types ────────────────────────────────────────────────
 export type ContentScriptMessage =
   | CSGestureMessage
@@ -145,10 +173,14 @@ export type SidePanelMessage =
   | SPConfirmPromptMessage
   | SPUpdateSettingsMessage
   | SPCheckConnectivityMessage
-  | SPExportCSVMessage;
+  | SPExportCSVMessage
+  | SPVoiceStartMessage
+  | SPVoiceStopMessage
+  | SPVoiceCheckSupportMessage;
 
 export type EchoMessage =
   | ContentScriptMessage
   | ServiceWorkerToContentMessage
   | ServiceWorkerToSidePanelMessage
-  | SidePanelMessage;
+  | SidePanelMessage
+  | OffscreenMessage;

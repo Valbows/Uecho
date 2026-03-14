@@ -12,15 +12,19 @@ export const LOCALHOST_PATTERNS = [
 ];
 
 // Default settings
-export const DEFAULT_GRID_CELL_SIZE = 25; // px
+export const DEFAULT_GRID_CELL_SIZE = 1; // px
 export const DEFAULT_OVERLAY_MODE = 'off' as const;
 export const DEFAULT_IDE_TARGET = 'windsurf' as const;
+
+// MCP bridge URL (local service that queues prompts for IDE delivery)
+export const MCP_BRIDGE_URL = 'http://localhost:3939';
 
 // Backend endpoints
 export const API_ENDPOINTS = {
   health: '/api/health',
   processGesture: '/api/process-gesture',
   enhanceText: '/api/enhance-text',
+  generatePrompt: '/api/generate-prompt',
   sendToIde: '/api/send-to-ide',
   uploadScreenshot: '/api/upload-screenshot',
   exportCsv: '/api/export/csv',
@@ -49,4 +53,5 @@ export const STORAGE_KEYS = {
   settings: 'uecho_settings',
   onboarding_complete: 'uecho_onboarding_complete',
   cached_embeddings: 'uecho_cached_embeddings',
+  chat_messages: 'uecho_chat_messages',
 } as const;

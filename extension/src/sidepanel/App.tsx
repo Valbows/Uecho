@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type {
   ConnectivityStatus,
   OverlayMode,
@@ -71,12 +71,39 @@ const App: React.FC = () => {
     });
   };
 
-  const handleConfirmPrompt = (prompt: PromptSchema, ideTarget: IDETarget) => {
-    chrome.runtime.sendMessage({
-      type: 'SP_CONFIRM_PROMPT',
-      payload: { prompt, ide_target: ideTarget },
-    });
-  };
+  const [pushStatus, setPushStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+  const [pushError, setPushError] = useState<string | null>(null);
+  const pushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => { if (pushTimeoutRef.current) clearTimeout(pushTimeoutRef.current); };
+  }, []);
+
+  const handleConfirmPrompt = useCallback((prompt: PromptSchema, ideTarget: IDETarget) => {
+    setPushStatus('sending');
+    setPushError(null);
+    chrome.runtime.sendMessage(
+      {
+        type: 'SP_CONFIRM_PROMPT',
+        payload: { prompt, ide_target: ideTarget },
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          setPushStatus('error');
+          setPushError(chrome.runtime.lastError.message || 'Unknown error');
+          return;
+        }
+        if (response?.ok) {
+          setPushStatus('success');
+          if (pushTimeoutRef.current) clearTimeout(pushTimeoutRef.current);
+          pushTimeoutRef.current = setTimeout(() => setPushStatus('idle'), 3000);
+        } else {
+          setPushStatus('error');
+          setPushError(response?.error || 'Push failed');
+        }
+      }
+    );
+  }, []);
 
   const handleExportCsv = () => {
     chrome.runtime.sendMessage({ type: 'SP_EXPORT_CSV', payload: {} });
@@ -153,6 +180,8 @@ const App: React.FC = () => {
             verification={currentVerification}
             onConfirm={handleConfirmPrompt}
             onBack={() => setCurrentScreen('agent')}
+            pushStatus={pushStatus}
+            pushError={pushError}
           />
         )}
         {currentScreen === 'history' && (

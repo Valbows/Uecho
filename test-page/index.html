@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>U:Echo Test Page</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; }
+    .hero { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; padding: 4rem 2rem; text-align: center; }
+    .hero h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+    .hero p { font-size: 1.1rem; opacity: 0.9; }
+    .container { max-width: 960px; margin: 0 auto; padding: 2rem; }
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-top: 2rem; }
+    .card { background: white; border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 1px solid #e2e8f0; transition: transform 0.2s, box-shadow 0.2s; }
+    .card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .card h3 { font-size: 1.1rem; margin-bottom: 0.5rem; color: #6366f1; }
+    .card p { font-size: 0.9rem; color: #64748b; line-height: 1.6; }
+    .btn { display: inline-block; padding: 0.6rem 1.2rem; background: #6366f1; color: white; border: none; border-radius: 8px; font-size: 0.9rem; cursor: pointer; margin-top: 1rem; }
+    .btn:hover { background: #4f46e5; }
+    .stats { display: flex; gap: 2rem; justify-content: center; margin: 2rem 0; flex-wrap: wrap; }
+    .stat { text-align: center; }
+    .stat .number { font-size: 2rem; font-weight: 700; color: #6366f1; }
+    .stat .label { font-size: 0.85rem; color: #94a3b8; }
+    nav { background: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; }
+    nav .logo { font-weight: 700; font-size: 1.2rem; color: #6366f1; }
+    nav .nav-links { display: flex; gap: 1.5rem; }
+    nav .nav-links a { text-decoration: none; color: #64748b; font-size: 0.9rem; }
+    nav .nav-links a:hover { color: #6366f1; }
+    footer { text-align: center; padding: 2rem; color: #94a3b8; font-size: 0.85rem; border-top: 1px solid #e2e8f0; margin-top: 3rem; }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="logo">U:Echo Demo</div>
+    <div class="nav-links">
+      <a href="#home">Home</a>
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#contact">Contact</a>
+    </div>
+  </nav>
+
+  <section id="home" class="hero">
+    <h1 class="hero-title">Welcome to U:Echo</h1>
+    <p>Turn UI feedback into implementation-ready prompts</p>
+    <button class="btn" style="margin-top: 1.5rem; background: white; color: #6366f1; font-weight: 600;">Get Started</button>
+  </section>
+
+  <div class="container">
+    <div class="stats">
+      <div class="stat">
+        <div class="number">500+</div>
+        <div class="label">UI Changes</div>
+      </div>
+      <div class="stat">
+        <div class="number">98%</div>
+        <div class="label">Accuracy</div>
+      </div>
+      <div class="stat">
+        <div class="number">3s</div>
+        <div class="label">Avg Response</div>
+      </div>
+    </div>
+
+    <h2 id="features" style="text-align: center; margin-bottom: 0.5rem;">Features</h2>
+    <p style="text-align: center; color: #64748b; margin-bottom: 1rem;">Try selecting these elements with Grid or Div Box mode</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <h3>Grid Selection</h3>
+        <p>Click and drag to select regions on the page. Perfect for layout-level feedback.</p>
+        <button class="btn">Try Grid</button>
+      </div>
+      <div class="card">
+        <h3>Div Box Mode</h3>
+        <p>Hover over elements to see their boundaries. Click to select and describe changes.</p>
+        <button class="btn">Try Div Box</button>
+      </div>
+      <div class="card">
+        <h3>AI Chat</h3>
+        <p>Describe your UI changes in natural language. The AI enhances your description into actionable prompts.</p>
+        <button class="btn">Open Chat</button>
+      </div>
+    </div>
+  </div>
+
+  <section id="pricing" class="container" style="padding-top: 2rem;">
+    <h2 style="text-align: center; margin-bottom: 0.5rem;">Pricing</h2>
+    <p style="text-align: center; color: #64748b;">Free during development. Production plans coming soon.</p>
+  </section>
+
+  <section id="contact" class="container" style="padding-top: 2rem;">
+    <h2 style="text-align: center; margin-bottom: 0.5rem;">Contact</h2>
+    <p style="text-align: center; color: #64748b;">Reach us at <a href="mailto:hello@uecho.dev">hello@uecho.dev</a></p>
+  </section>
+
+  <footer>
+    <p>&copy; 2026 U:Echo — Test Page for Extension Development</p>
+  </footer>
+</body>
+</html>

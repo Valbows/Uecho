@@ -31,12 +31,12 @@ describe('Grid Renderer', () => {
     expect(gridEl).toBeInstanceOf(HTMLDivElement);
   });
 
-  it('should apply CSS grid background with default 25px cell size', async () => {
+  it('should apply CSS grid background with default 1px cell size', async () => {
     const { renderGrid } = await import('../../src/content/overlay/grid-renderer');
     renderGrid(container);
 
     const gridEl = container.querySelector('.uecho-grid-overlay') as HTMLDivElement;
-    expect(gridEl.style.backgroundSize).toContain('25px');
+    expect(gridEl.style.backgroundSize).toContain('1px');
   });
 
   it('should apply custom cell size when configured', async () => {

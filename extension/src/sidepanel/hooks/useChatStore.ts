@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ChatMessage, GestureEvent, PromptSchema } from '@shared/types';
+import { STORAGE_KEYS } from '@shared/constants';
 
 let _msgIdCounter = 0;
 function generateMsgId(prefix: string): string {
@@ -42,6 +43,34 @@ export function useChatStore(options: UseChatStoreOptions): UseChatStoreReturn {
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isLoadedRef = useRef(false);
+
+  // Load persisted messages from chrome.storage on mount
+  useEffect(() => {
+    chrome.storage.local.get(STORAGE_KEYS.chat_messages).then((result) => {
+      const raw = result[STORAGE_KEYS.chat_messages];
+      if (raw) {
+        try {
+          const stored = JSON.parse(raw) as ChatMessage[];
+          if (Array.isArray(stored) && stored.length > 0) {
+            setMessages(stored);
+          }
+        } catch { /* ignore corrupt data */ }
+      }
+    }).catch((err) => {
+      console.warn('[U:Echo] Failed to load chat history:', err);
+    }).finally(() => {
+      isLoadedRef.current = true;
+    });
+  }, []);
+
+  // Persist messages to chrome.storage on every change
+  useEffect(() => {
+    if (!isLoadedRef.current) return;
+    chrome.storage.local.set({
+      [STORAGE_KEYS.chat_messages]: JSON.stringify(messages),
+    });
+  }, [messages]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -125,6 +154,7 @@ export function useChatStore(options: UseChatStoreOptions): UseChatStoreReturn {
     setMessages([INITIAL_MESSAGE]);
     setInputText('');
     setIsProcessing(false);
+    chrome.storage.local.remove(STORAGE_KEYS.chat_messages);
   }, []);
 
   return {

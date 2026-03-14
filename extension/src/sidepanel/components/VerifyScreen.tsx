@@ -6,6 +6,8 @@ interface VerifyScreenProps {
   verification: VerificationResult | null;
   onConfirm: (prompt: PromptSchema, ideTarget: IDETarget) => void;
   onBack: () => void;
+  pushStatus?: 'idle' | 'sending' | 'success' | 'error';
+  pushError?: string | null;
 }
 
 const VerifyScreen: React.FC<VerifyScreenProps> = ({
@@ -13,6 +15,8 @@ const VerifyScreen: React.FC<VerifyScreenProps> = ({
   verification,
   onConfirm,
   onBack,
+  pushStatus = 'idle',
+  pushError = null,
 }) => {
   const [activeTab, setActiveTab] = useState<'prompt' | 'verification'>(
     'prompt'
@@ -224,12 +228,31 @@ const VerifyScreen: React.FC<VerifyScreenProps> = ({
 
         <button
           onClick={() => onConfirm(prompt, selectedIDE)}
-          className="w-full py-2.5 bg-primary text-white text-sm font-semibold rounded-lg
-            hover:bg-primary-600 active:bg-primary-700 transition-all
-            shadow-md shadow-primary/20"
+          disabled={pushStatus === 'sending' || pushStatus === 'success'}
+          className={`w-full py-2.5 text-white text-sm font-semibold rounded-lg transition-all shadow-md ${
+            pushStatus === 'success'
+              ? 'bg-echo-success shadow-echo-success/20'
+              : pushStatus === 'error'
+                ? 'bg-echo-error shadow-echo-error/20'
+                : 'bg-primary hover:bg-primary-600 active:bg-primary-700 shadow-primary/20'
+          } disabled:opacity-60 disabled:cursor-not-allowed`}
         >
-          Push to {selectedIDE.charAt(0).toUpperCase() + selectedIDE.slice(1)}
+          {pushStatus === 'sending'
+            ? 'Pushing...'
+            : pushStatus === 'success'
+              ? '✓ Pushed Successfully'
+              : pushStatus === 'error'
+                ? '✗ Push Failed — Retry?'
+                : `Push to ${selectedIDE.charAt(0).toUpperCase() + selectedIDE.slice(1)}`}
         </button>
+        {pushStatus === 'error' && pushError && (
+          <p className="text-[10px] text-echo-error mt-1 text-center">{pushError}</p>
+        )}
+        {pushStatus === 'success' && (
+          <p className="text-[10px] text-echo-success mt-1 text-center">
+            Prompt delivered to U:Echo MCP server — available in {selectedIDE.charAt(0).toUpperCase() + selectedIDE.slice(1)} Cascade
+          </p>
+        )}
       </div>
     </div>
   );
