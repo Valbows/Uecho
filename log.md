@@ -330,3 +330,20 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-14] [FIX] [EMBED] — Added defensive bounds check on dists[i] in vector store search loop`
 - `[2026-03-14] [FIX] [LOG] — Consolidated fragmented identity/oauth2 entries in log.md into clear lifecycle (add → revert)`
 - `[2026-03-14] [INFO] [TEST] — Full suite after round 2: backend 87/87, extension 111/111, MCP bridge 38/38, Playwright E2E 33/33 (3 skipped)`
+
+### Screenshot → MCP Bridge Pipeline
+- `[2026-03-14] [FEAT] [EXT] — captureScreenshot: non-blocking GCS upload via backend /api/upload-screenshot with data URL fallback`
+- `[2026-03-14] [FEAT] [EXT] — resolveScreenshotUrl: background cache maps data URLs → signed URLs for later lookup`
+- `[2026-03-14] [FEAT] [EXT] — SP_SUBMIT_TEXT: capture screenshot of active tab before calling generate-prompt`
+- `[2026-03-14] [FEAT] [EXT] — SP_CONFIRM_PROMPT: include screenshot_url (resolved) in MCP bridge payload`
+- `[2026-03-14] [FEAT] [BACKEND] — generate-prompt: accept optional screenshot_url, populate prompt.screenshots`
+- `[2026-03-14] [FEAT] [BACKEND] — process-gesture: attach payload.screenshot_url to prompt.screenshots`
+- `[2026-03-14] [FEAT] [BACKEND] — upload-screenshot: fast-fail 503 if GOOGLE_APPLICATION_CREDENTIALS not set; added signed_url to response`
+- `[2026-03-14] [FEAT] [MCP] — server.ts: accept screenshot_url in IncomingPrompt, pass through to queue and adapters`
+- `[2026-03-14] [FEAT] [MCP] — adapters.ts: all IDE adapters (Windsurf, Cursor, VS Code, Antigravity) include screenshot in formatted output`
+- `[2026-03-14] [FIX] [EXT] — Filter data URLs from backend generate-prompt request (too large for JSON); only send actual signed URLs`
+- `[2026-03-14] [FIX] [BACKEND] — screenshot_url max_length: 5_000_000 → 2000 (matching page_url) now that data URLs are filtered client-side`
+- `[2026-03-14] [FEAT] [EXT] — Inject captured screenshot into agentResponse.prompt.screenshots so MCP bridge receives it even without GCS`
+- `[2026-03-15] [FIX] [MCP] — Increase Express JSON body limit to 5MB (express.json({ limit: '5mb' })) to accept base64 data URL screenshots`
+- `[2026-03-15] [INFO] [TEST] — Manual test: screenshot captured, pushed to MCP bridge as 313KB base64 PNG in Windsurf markdown format`
+- `[2026-03-15] [INFO] [TEST] — Full suite after screenshot pipeline: backend 87/87, extension 111/111, MCP bridge 38/38, Playwright E2E 33/33 (3 skipped)`

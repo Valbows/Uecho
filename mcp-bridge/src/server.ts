@@ -24,7 +24,7 @@ const PORT = parseInt(process.env.MCP_BRIDGE_PORT || '3939', 10);
 const TOKEN = process.env.MCP_BRIDGE_TOKEN || '';
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 // ─── SSE Clients ────────────────────────────────────────────────
 type SSEClient = express.Response;
@@ -93,6 +93,7 @@ interface IncomingPrompt {
   selector: string;
   action_type: string;
   ide_target: string;
+  screenshot_url?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -114,6 +115,7 @@ app.post('/prompt', authMiddleware, (req, res) => {
     feature_name: payload.feature_name,
     selector: payload.selector,
     action_type: payload.action_type,
+    screenshot_url: payload.screenshot_url,
   });
 
   console.log(`[MCP Bridge] Queued prompt ${prompt_id} for ${payload.ide_target}`);

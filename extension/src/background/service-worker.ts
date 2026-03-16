@@ -236,6 +236,13 @@ async function handleMessage(
         // Generate a structured prompt from the user's text
         try {
           const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+          // Capture screenshot of the current tab for context
+          let screenshotUrl = '';
+          if (tab?.id) {
+            screenshotUrl = await captureScreenshot(tab.id);
+          }
+
           const promptRes = await fetch(
             `${BACKEND_URL}${API_ENDPOINTS.generatePrompt}`,
             {
@@ -246,6 +253,7 @@ async function handleMessage(
                 page_url: tab?.url || '',
                 selector: (message.payload.metadata as Record<string, unknown>)?.selector || 'body',
                 action_type: (message.payload.metadata as Record<string, unknown>)?.action_type || 'modify',
+                screenshot_url: screenshotUrl && !screenshotUrl.startsWith('data:') ? screenshotUrl : undefined,
               }),
             }
           );
@@ -255,6 +263,15 @@ async function handleMessage(
             break;
           }
           const agentResponse = await promptRes.json();
+
+          // Inject captured screenshot into prompt so it's available for MCP bridge
+          if (screenshotUrl && agentResponse.prompt) {
+            const resolved = resolveScreenshotUrl(screenshotUrl);
+            if (!agentResponse.prompt.screenshots?.length) {
+              agentResponse.prompt.screenshots = [resolved];
+            }
+          }
+
           sendResponse({ ok: true, ...agentResponse });
           // Notify side panel with the full AgentResponse (includes prompt + verification)
           chrome.runtime.sendMessage({
@@ -333,6 +350,9 @@ async function handleMessage(
               selector: message.payload.prompt.selector,
               action_type: message.payload.prompt.action_type,
               ide_target: message.payload.ide_target,
+              screenshot_url: message.payload.prompt.screenshots?.[0]
+                ? resolveScreenshotUrl(message.payload.prompt.screenshots[0])
+                : undefined,
               metadata: {
                 session_id: sessionManager.getCurrent()?.session_id,
               },
@@ -498,17 +518,74 @@ async function ensureOffscreenDocument(): Promise<void> {
 }
 
 // ─── Screenshot Capture ─────────────────────────────────────────
+// Cache of data URL → signed URL for background-uploaded screenshots
+const _screenshotUrlCache = new Map<string, string>();
+const MAX_SCREENSHOT_CACHE = 20;
+
 async function captureScreenshot(_tabId: number): Promise<string> {
   try {
     const dataUrl = await chrome.tabs.captureVisibleTab({
       format: 'png',
       quality: 90,
     });
-    // TODO: Phase 5 — upload to Cloud Storage, return URL
-    return dataUrl || '';
+    if (!dataUrl) return '';
+
+    // Fire-and-forget: upload to GCS in background, cache the signed URL
+    uploadScreenshotToGCS(dataUrl).catch(() => {});
+
+    return dataUrl;
   } catch (error) {
     console.error('[U:Echo SW] Screenshot capture failed:', error);
     return '';
+  }
+}
+
+// Returns the signed URL if the background upload completed, otherwise the original URL
+function resolveScreenshotUrl(url: string): string {
+  return _screenshotUrlCache.get(url) || url;
+}
+
+async function uploadScreenshotToGCS(dataUrl: string): Promise<string | null> {
+  // Convert data URL to Blob
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+
+  const formData = new FormData();
+  formData.append('file', blob, `screenshot-${Date.now()}.png`);
+
+  // 3-second timeout to avoid blocking on slow/unavailable GCS
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+
+  try {
+    const uploadRes = await fetch(`${BACKEND_URL}${API_ENDPOINTS.uploadScreenshot}`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+
+    if (!uploadRes.ok) {
+      console.warn(`[U:Echo SW] Screenshot upload returned ${uploadRes.status}`);
+      return null;
+    }
+
+    const data = await uploadRes.json();
+    const signedUrl = data.signed_url || data.url || null;
+
+    // Cache the mapping so callers can resolve later
+    if (signedUrl) {
+      if (_screenshotUrlCache.size >= MAX_SCREENSHOT_CACHE) {
+        const oldest = _screenshotUrlCache.keys().next().value;
+        if (oldest) _screenshotUrlCache.delete(oldest);
+      }
+      _screenshotUrlCache.set(dataUrl, signedUrl);
+    }
+    return signedUrl;
+  } catch (err) {
+    console.warn('[U:Echo SW] GCS upload failed:', err);
+    return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

@@ -14,6 +14,7 @@ export interface QueuedPrompt {
   feature_name: string;
   selector: string;
   action_type: string;
+  screenshot_url?: string;
   status: PromptStatus;
   formatted: FormattedPrompt;
   created_at: string;
@@ -69,7 +70,7 @@ export function purgeTerminal(olderThanMs: number = DEFAULT_TTL_MS): number {
 export function enqueue(
   prompt_id: string,
   formatted: FormattedPrompt,
-  meta: { feature_name: string; selector: string; action_type: string }
+  meta: { feature_name: string; selector: string; action_type: string; screenshot_url?: string }
 ): QueuedPrompt {
   if (_queue.has(prompt_id)) {
     throw new Error(`Duplicate prompt_id: ${prompt_id}`);
@@ -84,6 +85,7 @@ export function enqueue(
     feature_name: meta.feature_name,
     selector: meta.selector,
     action_type: meta.action_type,
+    screenshot_url: meta.screenshot_url,
     status: 'queued',
     formatted,
     created_at: now,

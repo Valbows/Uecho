@@ -12,6 +12,7 @@ export interface PromptPayload {
   selector: string;
   action_type: string;
   ide_target: string;
+  screenshot_url?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -25,7 +26,7 @@ export interface FormattedPrompt {
 // ─── Windsurf Adapter ─────────────────────────────────────────────
 // Windsurf uses Cascade chat — format as a markdown instruction block
 function formatWindsurf(payload: PromptPayload): FormattedPrompt {
-  const content = [
+  const lines = [
     `## U:Echo Design Change: ${payload.feature_name}`,
     '',
     '```yaml',
@@ -34,7 +35,11 @@ function formatWindsurf(payload: PromptPayload): FormattedPrompt {
     '```',
     '',
     payload.prompt_text,
-  ].join('\n');
+  ];
+  if (payload.screenshot_url) {
+    lines.push('', `### Screenshot`, `![Screenshot](${payload.screenshot_url})`);
+  }
+  const content = lines.join('\n');
 
   return {
     ide_target: 'windsurf',
@@ -47,7 +52,7 @@ function formatWindsurf(payload: PromptPayload): FormattedPrompt {
 // ─── Cursor Adapter ───────────────────────────────────────────────
 // Cursor uses composer — format as structured instruction
 function formatCursor(payload: PromptPayload): FormattedPrompt {
-  const content = [
+  const lines = [
     `@workspace Apply the following UI change:`,
     '',
     `**Feature:** ${payload.feature_name}`,
@@ -55,7 +60,11 @@ function formatCursor(payload: PromptPayload): FormattedPrompt {
     `**Action:** ${payload.action_type}`,
     '',
     payload.prompt_text,
-  ].join('\n');
+  ];
+  if (payload.screenshot_url) {
+    lines.push('', `**Screenshot:** ![Screenshot](${payload.screenshot_url})`);
+  }
+  const content = lines.join('\n');
 
   return {
     ide_target: 'cursor',
@@ -75,6 +84,7 @@ function formatVSCode(payload: PromptPayload): FormattedPrompt {
       selector: payload.selector,
       action_type: payload.action_type,
       prompt: payload.prompt_text,
+      ...(payload.screenshot_url && { screenshot_url: payload.screenshot_url }),
     },
     null,
     2
@@ -91,12 +101,16 @@ function formatVSCode(payload: PromptPayload): FormattedPrompt {
 // ─── Antigravity Adapter ──────────────────────────────────────────
 // Antigravity uses natural language input — format as plain instruction
 function formatAntigravity(payload: PromptPayload): FormattedPrompt {
-  const content = [
+  const lines = [
     `[U:Echo] ${payload.feature_name}`,
     `Target: ${payload.selector} (${payload.action_type})`,
     '',
     payload.prompt_text,
-  ].join('\n');
+  ];
+  if (payload.screenshot_url) {
+    lines.push('', `Screenshot: ${payload.screenshot_url}`);
+  }
+  const content = lines.join('\n');
 
   return {
     ide_target: 'antigravity',

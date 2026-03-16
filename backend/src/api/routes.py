@@ -119,6 +119,10 @@ async def process_gesture(request: Request, payload: MetadataPayload, _user=Depe
         # 4. Build structured prompt
         prompt = build_prompt(payload, intent, retrieved_examples)
 
+        # 4b. Attach screenshot if provided
+        if payload.screenshot_url:
+            prompt.screenshots = [payload.screenshot_url]
+
         # 5. Verify prompt quality
         verification = verify_prompt(prompt, intent)
 
@@ -208,6 +212,7 @@ class GeneratePromptRequest(BaseModel):
     selector: str = Field(default="body", max_length=500)
     page_url: str = Field(default="", max_length=2000)
     action_type: str = Field(default="modify", max_length=50)
+    screenshot_url: str | None = Field(default=None, max_length=2000)
 
 
 @app.post("/api/generate-prompt", response_model=AgentResponse)
@@ -273,6 +278,7 @@ Respond ONLY with valid JSON (no markdown, no explanation) matching this schema:
             current_dimensions=BoundingBox(x=0, y=0, width=0, height=0),
             target_dimensions=BoundingBox(x=0, y=0, width=0, height=0),
             visual_change_description=parsed.get("visual_change_description", body.text),
+            screenshots=[body.screenshot_url] if body.screenshot_url else [],
             tab_url=body.page_url,
             prompt_text=parsed.get("prompt_text", body.text),
             extension_session_id="",
@@ -302,6 +308,7 @@ Respond ONLY with valid JSON (no markdown, no explanation) matching this schema:
             current_dimensions=BoundingBox(x=0, y=0, width=0, height=0),
             target_dimensions=BoundingBox(x=0, y=0, width=0, height=0),
             visual_change_description=body.text,
+            screenshots=[body.screenshot_url] if body.screenshot_url else [],
             tab_url=body.page_url,
             prompt_text=body.text,
             extension_session_id="",
@@ -322,6 +329,10 @@ GCS_BUCKET = os.getenv("FIREBASE_STORAGE_BUCKET", "user-echo-ui-navigator-screen
 @limiter.limit("10/minute")
 async def upload_screenshot(request: Request, file: UploadFile = File(...), _user=Depends(verify_token)):
     """Upload a screenshot to Google Cloud Storage."""
+    # Fast-fail if no service account key — signed URLs require it
+    if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+        raise HTTPException(status_code=503, detail="GCS service account not configured (GOOGLE_APPLICATION_CREDENTIALS)")
+
     try:
         import asyncio
         from google.cloud import storage as gcs
@@ -360,6 +371,7 @@ async def upload_screenshot(request: Request, file: UploadFile = File(...), _use
         signed_url = await asyncio.to_thread(_upload)
 
         return {
+            "signed_url": signed_url,
             "url": signed_url,
             "gs_uri": f"gs://{GCS_BUCKET}/{filename}",
             "filename": filename,
