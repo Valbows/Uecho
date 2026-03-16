@@ -324,14 +324,32 @@ Respond ONLY with valid JSON (no markdown, no explanation) matching this schema:
 # ─── Upload Screenshot ───────────────────────────────────────────
 GCS_BUCKET = os.getenv("FIREBASE_STORAGE_BUCKET", "user-echo-ui-navigator-screenshots")
 
+_gcs_signing_capable: bool | None = None
+
+
+def _check_gcs_signing() -> bool:
+    """Check if current credentials support signing (cached after first call)."""
+    global _gcs_signing_capable
+    if _gcs_signing_capable is not None:
+        return _gcs_signing_capable
+    try:
+        from google.auth import default as auth_default
+        from google.auth.credentials import Signing
+
+        creds, _ = auth_default()
+        _gcs_signing_capable = isinstance(creds, Signing)
+    except Exception:
+        _gcs_signing_capable = False
+    return _gcs_signing_capable
+
 
 @app.post("/api/upload-screenshot")
 @limiter.limit("10/minute")
 async def upload_screenshot(request: Request, file: UploadFile = File(...), _user=Depends(verify_token)):
     """Upload a screenshot to Google Cloud Storage."""
-    # Fast-fail if no service account key — signed URLs require it
-    if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-        raise HTTPException(status_code=503, detail="GCS service account not configured (GOOGLE_APPLICATION_CREDENTIALS)")
+    # Fast-fail if credentials don't support signing (needed for signed URLs)
+    if not _check_gcs_signing():
+        raise HTTPException(status_code=503, detail="GCS signing credentials not available")
 
     try:
         import asyncio

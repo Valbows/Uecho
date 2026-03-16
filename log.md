@@ -346,4 +346,5 @@ Each entry: `[DATE] [SEVERITY] [COMPONENT] — Description → Resolution`
 - `[2026-03-14] [FEAT] [EXT] — Inject captured screenshot into agentResponse.prompt.screenshots so MCP bridge receives it even without GCS`
 - `[2026-03-15] [FIX] [MCP] — Increase Express JSON body limit to 5MB (express.json({ limit: '5mb' })) to accept base64 data URL screenshots`
 - `[2026-03-15] [INFO] [TEST] — Manual test: screenshot captured, pushed to MCP bridge as 313KB base64 PNG in Windsurf markdown format`
+- `[2026-03-15] [FIX] [BACKEND] — upload-screenshot: replaced GOOGLE_APPLICATION_CREDENTIALS env var check with cached google.auth.credentials.Signing capability check for Cloud Run/GKE compatibility`
 - `[2026-03-15] [INFO] [TEST] — Full suite after screenshot pipeline: backend 87/87, extension 111/111, MCP bridge 38/38, Playwright E2E 33/33 (3 skipped)`
